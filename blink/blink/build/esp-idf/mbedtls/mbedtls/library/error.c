@@ -1,1 +1,0 @@
-/Users/justinbetz/Documents/GitHub/CanaryCap/esp/esp-idf/components/mbedtls/mbedtls/library/error.c
