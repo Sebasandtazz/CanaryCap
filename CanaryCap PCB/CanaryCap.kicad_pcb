@@ -556,7 +556,7 @@
 	(footprint "RF_Module:ESP32-C6-MINI-1"
 		(layer "F.Cu")
 		(uuid "5bea0bc0-5566-4031-a0d3-7c80980b8b59")
-		(at 205.925 55 -90)
+		(at 204.925 55 -90)
 		(descr "2.4 GHz Wi-Fi, Bluetooth, Zigbee and Thread combo chip, external antenna, https://www.espressif.com/sites/default/files/documentation/esp32-c6-mini-1_mini-1u_datasheet_en.pdf")
 		(tags "2.4 GHz Wi-Fi Bluetooth Zigbee Thread external antenna espressif  16.6*13.2mm")
 		(property "Reference" "U1"
@@ -1439,7 +1439,7 @@
 			)
 			(polygon
 				(pts
-					(xy 211.525 76.6) (xy 211.525 33.4) (xy 231.925 33.4) (xy 231.925 76.6)
+					(xy 210.525 76.6) (xy 210.525 33.4) (xy 230.925 33.4) (xy 230.925 76.6)
 				)
 			)
 		)
