@@ -640,6 +640,18 @@
     [
       "406ad30e-b04c-4bb7-9588-aab8ab73084a",
       "Root"
+    ],
+    [
+      "3219e357-ed27-4a99-8f08-f1a850fa8309",
+      "Power_System"
+    ],
+    [
+      "865b4f90-0093-4030-8a8d-928bbea99e0f",
+      "MicroConfig"
+    ],
+    [
+      "da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a",
+      "IO"
     ]
   ],
   "text_variables": {}
