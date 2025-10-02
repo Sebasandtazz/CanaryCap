@@ -1,0 +1,36 @@
+esp-idf/esp_mm/CMakeFiles/__idf_esp_mm.dir/port/esp32c6/ext_mem_layout.c.obj: \
+ C:/Users/sebas/esp/v5.5.1/esp-idf/components/esp_mm/port/esp32c6/ext_mem_layout.c \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/stdlib.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/machine/ieeefp.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/_ansi.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/newlib.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/_newlib_version.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/sys/config.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/sys/features.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/lib/gcc/riscv32-esp-elf/14.2.0/include/stddef.h \
+ C:/Users/sebas/esp/v5.5.1/esp-idf/components/newlib/platform_include/sys/reent.h \
+ C:/Users/sebas/Documents/Homework/Fall_2025/ECE\ 49022/CanaryCap/windows\ blink/blink/build/config/sdkconfig.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/sys/reent.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/_ansi.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/sys/_types.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/machine/_types.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/machine/_default_types.h \
+ C:/Users/sebas/esp/v5.5.1/esp-idf/components/newlib/platform_include/sys/lock.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/sys/lock.h \
+ C:/Users/sebas/esp/v5.5.1/esp-idf/components/newlib/platform_include/assert.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/lib/gcc/riscv32-esp-elf/14.2.0/include/stdint.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/stdint.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/sys/_intsup.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/sys/_stdint.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/assert.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/sys/cdefs.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/machine/stdlib.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/alloca.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/riscv32-esp-elf/include/sys/_locale.h \
+ C:/Users/sebas/esp/v5.5.1/esp-idf/components/soc/esp32c6/include/soc/ext_mem_defs.h \
+ C:/Users/sebas/esp/v5.5.1/esp-idf/components/esp_common/include/esp_bit_defs.h \
+ C:/Users/sebas/esp/v5.5.1/esp-idf/components/esp_mm/ext_mem_layout.h \
+ C:/Users/sebas/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/lib/gcc/riscv32-esp-elf/14.2.0/include/stdbool.h \
+ C:/Users/sebas/esp/v5.5.1/esp-idf/components/soc/esp32c6/include/soc/soc_caps.h \
+ C:/Users/sebas/esp/v5.5.1/esp-idf/components/hal/include/hal/cache_types.h \
+ C:/Users/sebas/esp/v5.5.1/esp-idf/components/hal/include/hal/mmu_types.h
