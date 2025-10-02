@@ -5,6 +5,7 @@
 	(uuid "406ad30e-b04c-4bb7-9588-aab8ab73084a")
 	(paper "A4")
 	(title_block
+		(title "CanaryCapMain")
 		(date "2025-10-01")
 	)
 	(lib_symbols)
@@ -24,7 +25,7 @@
 			(color 0 0 0 0.0000)
 		)
 		(uuid "3219e357-ed27-4a99-8f08-f1a850fa8309")
-		(property "Sheetname" "Power_System"
+		(property "Sheetname" "PowerSystem"
 			(at 26.67 41.1984 0)
 			(effects
 				(font
