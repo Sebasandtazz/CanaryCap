@@ -56,8 +56,8 @@
 	)
 	(attr smd)
 	(fp_circle
-		(center -2.8067 -0.7)
-		(end -2.4257 -0.7)
+		(center -1.8 -1.9)
+		(end -1.419 -1.9)
 		(stroke
 			(width 0.508)
 			(type solid)
@@ -67,8 +67,8 @@
 		(uuid "bcb5cf06-a413-4f81-978d-ea9ba9703b83")
 	)
 	(fp_circle
-		(center -2.8067 -0.7)
-		(end -2.4257 -0.7)
+		(center -1.8 -1.9)
+		(end -1.419 -1.9)
 		(stroke
 			(width 0.508)
 			(type solid)
@@ -158,8 +158,8 @@
 		(uuid "c9f640b8-0476-4169-8c71-788b8035adbc")
 	)
 	(fp_circle
-		(center -2.8 -0.7)
-		(end -2.6 -0.9)
+		(center -1.7933 -1.9)
+		(end -1.5933 -2.1)
 		(stroke
 			(width 0.508)
 			(type solid)

@@ -2852,16 +2852,6 @@
 	)
 	(wire
 		(pts
-			(xy 165.1 73.66) (xy 189.23 73.66)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "730aa468-21d8-4cc9-8b1b-e26e69ba64ba")
-	)
-	(wire
-		(pts
 			(xy 158.75 73.66) (xy 165.1 73.66)
 		)
 		(stroke
@@ -3326,7 +3316,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "150ab798-fa8b-4587-863e-f4d5225d6219")
-		(property "Reference" "#PWR045"
+		(property "Reference" "#PWR029"
 			(at 102.87 167.64 0)
 			(effects
 				(font
@@ -3376,7 +3366,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR045")
+					(reference "#PWR029")
 					(unit 1)
 				)
 			)
@@ -3657,7 +3647,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "383a70ae-328c-41d9-b0a1-e36f93e1b9e1")
-		(property "Reference" "#PWR041"
+		(property "Reference" "#PWR031"
 			(at 113.03 119.38 0)
 			(effects
 				(font
@@ -3707,7 +3697,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR041")
+					(reference "#PWR031")
 					(unit 1)
 				)
 			)
@@ -3722,7 +3712,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "3abb2e03-4f1c-4c65-85e1-5aa41df8f6ae")
-		(property "Reference" "R7"
+		(property "Reference" "R5"
 			(at 87.63 67.31 90)
 			(effects
 				(font
@@ -3776,7 +3766,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "R7")
+					(reference "R5")
 					(unit 1)
 				)
 			)
@@ -3792,7 +3782,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "50f9b298-e4a4-4371-bd87-c4fd9d95ce33")
-		(property "Reference" "#PWR048"
+		(property "Reference" "#PWR038"
 			(at 200.66 135.89 0)
 			(effects
 				(font
@@ -3842,7 +3832,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR048")
+					(reference "#PWR038")
 					(unit 1)
 				)
 			)
@@ -3857,7 +3847,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "5bac9309-e931-4060-8375-d680f5d8c6e6")
-		(property "Reference" "R11"
+		(property "Reference" "R9"
 			(at 120.396 128.016 90)
 			(effects
 				(font
@@ -3911,7 +3901,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "R11")
+					(reference "R9")
 					(unit 1)
 				)
 			)
@@ -3927,7 +3917,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "68db8b71-951e-41cb-a48b-934f9d6b0e91")
-		(property "Reference" "C25"
+		(property "Reference" "C19"
 			(at 168.91 78.7399 0)
 			(effects
 				(font
@@ -3981,7 +3971,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "C25")
+					(reference "C19")
 					(unit 1)
 				)
 			)
@@ -3997,7 +3987,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "6bfafce5-4c7e-4362-b162-d08187a7ec3e")
-		(property "Reference" "#PWR043"
+		(property "Reference" "#PWR032"
 			(at 130.81 148.59 0)
 			(effects
 				(font
@@ -4047,7 +4037,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR043")
+					(reference "#PWR032")
 					(unit 1)
 				)
 			)
@@ -4063,7 +4053,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "71d320a0-6293-447c-b0c8-646ec1de3868")
-		(property "Reference" "#PWR038"
+		(property "Reference" "#PWR033"
 			(at 132.08 66.04 0)
 			(effects
 				(font
@@ -4113,7 +4103,7 @@
 		(instances
 			(project ""
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR038")
+					(reference "#PWR033")
 					(unit 1)
 				)
 			)
@@ -4129,7 +4119,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "73baf9d0-ad8d-4c91-94fe-13b90e813df0")
-		(property "Reference" "#PWR029"
+		(property "Reference" "#PWR028"
 			(at 102.87 62.23 0)
 			(effects
 				(font
@@ -4180,7 +4170,7 @@
 		(instances
 			(project ""
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR029")
+					(reference "#PWR028")
 					(unit 1)
 				)
 			)
@@ -4196,7 +4186,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "879bb60f-2445-45d3-af9b-af248c816a99")
-		(property "Reference" "#PWR040"
+		(property "Reference" "#PWR034"
 			(at 132.08 77.47 0)
 			(effects
 				(font
@@ -4246,7 +4236,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR040")
+					(reference "#PWR034")
 					(unit 1)
 				)
 			)
@@ -4262,7 +4252,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "8d41bd43-57fa-49de-836a-76e7ef9ebd9f")
-		(property "Reference" "#PWR042"
+		(property "Reference" "#PWR035"
 			(at 135.89 97.79 0)
 			(effects
 				(font
@@ -4312,7 +4302,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR042")
+					(reference "#PWR035")
 					(unit 1)
 				)
 			)
@@ -4404,7 +4394,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "ab8c4f01-cfe9-41c4-a471-4f8f46da6bc6")
-		(property "Reference" "#PWR046"
+		(property "Reference" "#PWR037"
 			(at 200.66 120.65 0)
 			(effects
 				(font
@@ -4454,7 +4444,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR046")
+					(reference "#PWR037")
 					(unit 1)
 				)
 			)
@@ -4469,7 +4459,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "b1dc8483-cbae-4e89-9b30-7ec8c1311d2a")
-		(property "Reference" "U5"
+		(property "Reference" "U4"
 			(at 116.586 142.494 0)
 			(effects
 				(font
@@ -4557,7 +4547,7 @@
 		(instances
 			(project ""
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "U5")
+					(reference "U4")
 					(unit 1)
 				)
 			)
@@ -4572,7 +4562,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "b32568b2-8b0c-43c3-8fd4-15f32a0e4d9c")
-		(property "Reference" "R9"
+		(property "Reference" "R7"
 			(at 95.758 56.896 90)
 			(effects
 				(font
@@ -4626,7 +4616,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "R9")
+					(reference "R7")
 					(unit 1)
 				)
 			)
@@ -4641,7 +4631,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "bc15c835-d607-4881-bd36-a5e707838162")
-		(property "Reference" "R10"
+		(property "Reference" "R8"
 			(at 95.758 59.69 90)
 			(effects
 				(font
@@ -4695,7 +4685,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "R10")
+					(reference "R8")
 					(unit 1)
 				)
 			)
@@ -4711,7 +4701,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "cebdab94-df9b-4fba-a9c9-c014a8f50f6d")
-		(property "Reference" "#PWR028"
+		(property "Reference" "#PWR027"
 			(at 88.9 57.15 0)
 			(effects
 				(font
@@ -4761,7 +4751,7 @@
 		(instances
 			(project ""
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR028")
+					(reference "#PWR027")
 					(unit 1)
 				)
 			)
@@ -4777,7 +4767,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "cfa6c028-5d9e-419f-8a36-d0f876cbfe04")
-		(property "Reference" "#PWR027"
+		(property "Reference" "#PWR026"
 			(at 63.5 100.33 0)
 			(effects
 				(font
@@ -4827,7 +4817,7 @@
 		(instances
 			(project ""
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR027")
+					(reference "#PWR026")
 					(unit 1)
 				)
 			)
@@ -4842,7 +4832,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "d35da883-0b60-409a-990c-6ae908bec2a2")
-		(property "Reference" "R8"
+		(property "Reference" "R6"
 			(at 87.884 77.724 90)
 			(effects
 				(font
@@ -4896,7 +4886,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "R8")
+					(reference "R6")
 					(unit 1)
 				)
 			)
@@ -4911,7 +4901,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "dadbef1f-585c-428a-9a60-2baa27e048ff")
-		(property "Reference" "R15"
+		(property "Reference" "R11"
 			(at 130.556 84.582 0)
 			(effects
 				(font
@@ -4965,7 +4955,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "R15")
+					(reference "R11")
 					(unit 1)
 				)
 			)
@@ -4980,7 +4970,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "dc3fc65b-9202-4ff0-80f1-4c0a98ef8103")
-		(property "Reference" "R13"
+		(property "Reference" "R10"
 			(at 120.65 133.096 90)
 			(effects
 				(font
@@ -5034,7 +5024,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "R13")
+					(reference "R10")
 					(unit 1)
 				)
 			)
@@ -5050,7 +5040,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "e0307479-45bf-41c0-9926-393439c7eee6")
-		(property "Reference" "#PWR044"
+		(property "Reference" "#PWR036"
 			(at 189.23 66.04 0)
 			(effects
 				(font
@@ -5100,7 +5090,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR044")
+					(reference "#PWR036")
 					(unit 1)
 				)
 			)
@@ -5115,7 +5105,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "e3d1824f-793a-400f-b2fd-02b18ba14a99")
-		(property "Reference" "R19"
+		(property "Reference" "R13"
 			(at 162.56 69.85 90)
 			(effects
 				(font
@@ -5169,7 +5159,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "R19")
+					(reference "R13")
 					(unit 1)
 				)
 			)
@@ -5184,7 +5174,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "fa03f71f-221a-409b-a395-dbc97fe2dca1")
-		(property "Reference" "R17"
+		(property "Reference" "R12"
 			(at 152.4 81.026 0)
 			(effects
 				(font
@@ -5238,7 +5228,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "R17")
+					(reference "R12")
 					(unit 1)
 				)
 			)
@@ -5254,7 +5244,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "fbac3502-8962-48fa-a038-37432bf5ba19")
-		(property "Reference" "#PWR047"
+		(property "Reference" "#PWR030"
 			(at 107.95 139.7 0)
 			(effects
 				(font
@@ -5304,7 +5294,7 @@
 		(instances
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/da5ad29e-ffcf-45cc-ab35-f23b8b85ed0a"
-					(reference "#PWR047")
+					(reference "#PWR030")
 					(unit 1)
 				)
 			)
