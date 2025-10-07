@@ -1908,6 +1908,16 @@
 			(embedded_fonts no)
 		)
 	)
+	(text "IMPACT CANCEL BUTTON\n"
+		(exclude_from_sim no)
+		(at 223.012 87.63 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+		(uuid "19dd1044-4aa9-44a0-9b30-ca10a67beee9")
+	)
 	(text "NP0/C0G Capacitor for high speed and accuracy"
 		(exclude_from_sim no)
 		(at 175.26 157.48 0)
@@ -2025,6 +2035,12 @@
 		(uuid "b4315324-e700-4311-b32d-e0c76b16b483")
 	)
 	(junction
+		(at 208.28 99.06)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "dae9bac8-9086-4910-baf5-f378d830bc28")
+	)
+	(junction
 		(at 236.22 40.64)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -2098,6 +2114,16 @@
 	)
 	(wire
 		(pts
+			(xy 208.28 88.9) (xy 208.28 99.06)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "0ae8771e-1f6e-4aea-bc7a-56cbe0873a36")
+	)
+	(wire
+		(pts
 			(xy 151.13 134.62) (xy 153.67 134.62)
 		)
 		(stroke
@@ -2105,6 +2131,16 @@
 			(type default)
 		)
 		(uuid "1116f742-1610-4989-9c23-b3679be78736")
+	)
+	(wire
+		(pts
+			(xy 196.85 78.74) (xy 208.28 78.74)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "11d21210-c7f0-40fd-8bee-536bc1d0a42e")
 	)
 	(wire
 		(pts
@@ -2448,7 +2484,7 @@
 	)
 	(wire
 		(pts
-			(xy 196.85 99.06) (xy 199.39 99.06)
+			(xy 196.85 99.06) (xy 208.28 99.06)
 		)
 		(stroke
 			(width 0)
@@ -2538,7 +2574,7 @@
 	)
 	(wire
 		(pts
-			(xy 199.39 99.06) (xy 199.39 100.33)
+			(xy 208.28 99.06) (xy 208.28 100.33)
 		)
 		(stroke
 			(width 0)
@@ -2930,6 +2966,72 @@
 			)
 		)
 	)
+	(global_label "Impact_CLK"
+		(shape bidirectional)
+		(at 196.85 71.12 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "52bd64f4-b8a4-444d-a0ae-689c79cf368b")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 211.8926 71.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "GAS_IN"
+		(shape input)
+		(at 140.97 78.74 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "94499690-fd5c-4902-bd7d-dcad5c710fce")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 131.5138 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "GAS_DIG_IN"
+		(shape input)
+		(at 140.97 81.28 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "b060316d-32e3-4a63-8745-c2f8e8116734")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 127.4014 81.28 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+				(hide yes)
+			)
+		)
+	)
 	(global_label "BOOT"
 		(shape output)
 		(at 67.31 44.45 180)
@@ -2970,6 +3072,28 @@
 					(size 1.27 1.27)
 				)
 				(justify right)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "Impact_IO"
+		(shape bidirectional)
+		(at 196.85 68.58 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "d6776d59-ac73-432a-a48b-e109ea0afeb4")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 210.2598 68.58 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
 				(hide yes)
 			)
 		)
@@ -4727,6 +4851,75 @@
 		)
 	)
 	(symbol
+		(lib_id "Switch:SW_Push")
+		(at 208.28 83.82 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "77c9b040-e524-4b9d-b248-9bdf39d5a29c")
+		(property "Reference" "SW3"
+			(at 211.328 82.55 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(property "Value" "SW_MEC_5E"
+			(at 211.328 85.09 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(property "Footprint" "Button_Switch_SMD:SW_SPST_EVQP2_MiddlePushTravel_H2.5mm"
+			(at 203.2 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 203.2 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Push button switch, generic, two pins"
+			(at 208.28 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "b2c466f0-117a-4e23-af16-0291587a48e6")
+		)
+		(pin "2"
+			(uuid "475c6f1c-41ad-4984-a8fe-37576f3ec8de")
+		)
+		(instances
+			(project "CanaryCap"
+				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/865b4f90-0093-4030-8a8d-928bbea99e0f"
+					(reference "SW3")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
 		(lib_id "Device:R_Small")
 		(at 134.62 88.9 90)
 		(unit 1)
@@ -4930,7 +5123,7 @@
 	)
 	(symbol
 		(lib_id "power:GNDREF")
-		(at 199.39 100.33 0)
+		(at 208.28 100.33 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -4939,7 +5132,7 @@
 		(fields_autoplaced yes)
 		(uuid "94d3196c-9a97-49b5-83c4-21fe0c372ea2")
 		(property "Reference" "#PWR018"
-			(at 199.39 106.68 0)
+			(at 208.28 106.68 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4948,7 +5141,7 @@
 			)
 		)
 		(property "Value" "GNDREF"
-			(at 199.39 105.41 0)
+			(at 208.28 105.41 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4956,7 +5149,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 199.39 100.33 0)
+			(at 208.28 100.33 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4965,7 +5158,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 199.39 100.33 0)
+			(at 208.28 100.33 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4974,7 +5167,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"GNDREF\" , reference supply ground"
-			(at 199.39 100.33 0)
+			(at 208.28 100.33 0)
 			(effects
 				(font
 					(size 1.27 1.27)
