@@ -9,16 +9,6 @@
 		(date "2025-10-01")
 	)
 	(lib_symbols)
-	(text "TODO: Add piezo + a couple breakout \npins on a connector just in case"
-		(exclude_from_sim no)
-		(at 209.042 53.086 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-		)
-		(uuid "2e2bca64-d519-4664-9653-0f64cd160f35")
-	)
 	(sheet
 		(at 26.67 41.91)
 		(size 64.77 41.91)
