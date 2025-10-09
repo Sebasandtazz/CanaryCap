@@ -1,0 +1,39 @@
+dependencies:
+  esp-zigbee-lib:
+    dependencies: []
+    source:
+      path: /Users/justinbetz/Documents/GitHub/CanaryCap/src/components/esp-zigbee-lib
+      type: local
+    version: 1.6.7
+  espressif/cmake_utilities:
+    component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.5.3
+  espressif/esp-zboss-lib:
+    component_hash: 321883d142421f65009972408287441794250057668a11abbdfd8bec77c3309a
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.6.4
+  idf:
+    source:
+      type: idf
+    version: 6.0.0
+direct_dependencies:
+- espressif/cmake_utilities
+- espressif/esp-zboss-lib
+- espressif/esp-zigbee-lib
+- idf
+manifest_hash: 67b1e0d98b5e4cabf79053ce63dea9245bb6c67d67ed3f4eaed203f7dce2f6fe
+target: esp32c6
+version: 2.0.0
