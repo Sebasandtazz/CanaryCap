@@ -309,6 +309,158 @@
 			)
 			(embedded_fonts no)
 		)
+		(symbol "ESP-32-C6:WE-MCA_74889102450"
+			(pin_names
+				(offset 1.016)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "AE"
+				(at -2.54 3.81 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify bottom)
+				)
+			)
+			(property "Value" "WE-MCA_74889102450"
+				(at -5.08 -5.08 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left bottom)
+				)
+			)
+			(property "Footprint" "WE-MCA_74889102450:WE-MCA_74889102450"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify bottom)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" ""
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" ""
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "WE-MCA_74889102450_0_0"
+				(rectangle
+					(start -7.62 -2.54)
+					(end 7.62 2.54)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type background)
+					)
+				)
+				(polyline
+					(pts
+						(xy 3.81 6.35) (xy 2.54 7.62)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 3.81 6.35) (xy 5.08 7.62)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 3.81 0) (xy 3.81 7.62)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 3.81 0) (xy 7.62 0)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(pin passive line
+					(at -10.16 0 0)
+					(length 2.54)
+					(name "NC"
+						(effects
+							(font
+								(size 1.016 1.016)
+							)
+						)
+					)
+					(number "2"
+						(effects
+							(font
+								(size 1.016 1.016)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 10.16 0 180)
+					(length 2.54)
+					(name "~"
+						(effects
+							(font
+								(size 1.016 1.016)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.016 1.016)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
 		(symbol "power:GNDREF"
 			(power)
 			(pin_numbers
@@ -448,48 +600,14 @@
 		)
 	)
 	(junction
-		(at 57.15 39.37)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "1946a42e-cfcc-4578-b299-9526842fbd11")
-	)
-	(junction
-		(at 105.41 39.37)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "260db7bc-dcef-46dc-bdcd-6043c52d6dce")
-	)
-	(junction
 		(at 91.44 39.37)
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "2953801b-6e4b-445a-b7e1-1f9e7f9cf59d")
 	)
-	(junction
-		(at 71.12 39.37)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "b1d818c2-c0b5-4dfe-a329-babecb002bad")
-	)
-	(junction
-		(at 85.09 39.37)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "d1dace97-751b-4277-bb6e-8d6269fbb72b")
-	)
 	(wire
 		(pts
-			(xy 57.15 39.37) (xy 59.69 39.37)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "04902a55-e82d-41cb-a87f-64154ca53130")
-	)
-	(wire
-		(pts
-			(xy 101.6 39.37) (xy 105.41 39.37)
+			(xy 101.6 39.37) (xy 110.49 39.37)
 		)
 		(stroke
 			(width 0)
@@ -499,93 +617,13 @@
 	)
 	(wire
 		(pts
-			(xy 53.34 39.37) (xy 57.15 39.37)
+			(xy 76.2 39.37) (xy 91.44 39.37)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
-		(uuid "25f0d074-ffa4-42d1-a414-ca74197fb38e")
-	)
-	(wire
-		(pts
-			(xy 110.49 39.37) (xy 105.41 39.37)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "33d53c9b-9f5b-44aa-b1d4-57eee57dfd65")
-	)
-	(wire
-		(pts
-			(xy 85.09 46.99) (xy 85.09 49.53)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "574a30fd-01f4-441f-9956-af85ab0286f2")
-	)
-	(wire
-		(pts
-			(xy 71.12 46.99) (xy 71.12 49.53)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "63e36f7a-2001-4c1e-8f1a-27af645a50ed")
-	)
-	(wire
-		(pts
-			(xy 67.31 39.37) (xy 71.12 39.37)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "98974933-0a82-4849-8043-e015ef0f78fa")
-	)
-	(wire
-		(pts
-			(xy 105.41 46.99) (xy 105.41 49.53)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "9ee773cb-7536-4f4e-8356-2712e656bf3a")
-	)
-	(wire
-		(pts
-			(xy 76.2 39.37) (xy 71.12 39.37)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "a2f8135f-0491-48f8-a116-233d042e98dd")
-	)
-	(wire
-		(pts
-			(xy 85.09 39.37) (xy 91.44 39.37)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "a75554e6-e651-406e-951f-bc2b5c5462fd")
-	)
-	(wire
-		(pts
-			(xy 85.09 39.37) (xy 83.82 39.37)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "aa3cca14-86a8-45bf-b374-3c1fd193714b")
+		(uuid "1d9f6d74-ce6d-4ea1-a3c5-a5637fae5d1f")
 	)
 	(wire
 		(pts
@@ -599,16 +637,6 @@
 	)
 	(wire
 		(pts
-			(xy 57.15 46.99) (xy 57.15 49.53)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "bcf9df21-bfbd-415f-af88-03d926d1e87e")
-	)
-	(wire
-		(pts
 			(xy 91.44 46.99) (xy 91.44 49.53)
 		)
 		(stroke
@@ -619,7 +647,7 @@
 	)
 	(global_label "ANT_MICRO"
 		(shape bidirectional)
-		(at 53.34 39.37 180)
+		(at 76.2 39.37 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -629,7 +657,29 @@
 		)
 		(uuid "2af15b45-3ea3-4d1a-88d0-6a58b18cfa2d")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 38.9625 39.37 0)
+			(at 61.8225 39.37 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "ANT_OUT"
+		(shape bidirectional)
+		(at 93.98 69.85 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "39a33ef9-17bc-4a10-b0bf-3e96605db04c")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 81.9006 69.85 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -679,7 +729,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "tbd"
+		(property "Value" "1pF"
 			(at 95.25 44.4499 0)
 			(effects
 				(font
@@ -731,213 +781,6 @@
 		)
 	)
 	(symbol
-		(lib_id "Device:C")
-		(at 71.12 43.18 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(uuid "128144df-4458-49e1-b265-4577f75e8fe6")
-		(property "Reference" "C21"
-			(at 75.438 42.164 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "tbd"
-			(at 74.93 44.4499 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric_Pad1.08x0.95mm_HandSolder"
-			(at 72.0852 46.99 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 71.12 43.18 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Unpolarized capacitor"
-			(at 71.12 43.18 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "2"
-			(uuid "917d3d1e-27c3-487f-9f7d-316dee82b34a")
-		)
-		(pin "1"
-			(uuid "4959c409-08e7-4b88-a16f-6d385ab16de6")
-		)
-		(instances
-			(project "CanaryCap"
-				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/62cbd03f-2971-4d14-9dc5-93962962f3ed"
-					(reference "C21")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:C")
-		(at 80.01 39.37 90)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(uuid "1d3b068a-0838-44ac-993e-c143a1265286")
-		(property "Reference" "C22"
-			(at 82.042 34.036 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "tbd"
-			(at 82.55 31.7501 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric_Pad1.08x0.95mm_HandSolder"
-			(at 83.82 38.4048 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 80.01 39.37 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Unpolarized capacitor"
-			(at 80.01 39.37 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "2"
-			(uuid "8be09059-98a8-486f-8d8b-acaa51968864")
-		)
-		(pin "1"
-			(uuid "f0d17d2e-57d0-4ad7-ab6e-c3c1a843c970")
-		)
-		(instances
-			(project "CanaryCap"
-				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/62cbd03f-2971-4d14-9dc5-93962962f3ed"
-					(reference "C22")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:C")
-		(at 57.15 43.18 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(uuid "308c091a-6b69-4160-a670-268819a8484c")
-		(property "Reference" "C20"
-			(at 61.468 42.164 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "tbd"
-			(at 60.96 44.4499 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric_Pad1.08x0.95mm_HandSolder"
-			(at 58.1152 46.99 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 57.15 43.18 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Unpolarized capacitor"
-			(at 57.15 43.18 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "2"
-			(uuid "dde17e7c-8ad4-4d3d-8401-2bb08bc29088")
-		)
-		(pin "1"
-			(uuid "f0aabad6-f651-47f9-8960-41869ef3d283")
-		)
-		(instances
-			(project "CanaryCap"
-				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/62cbd03f-2971-4d14-9dc5-93962962f3ed"
-					(reference "C20")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "Device:L")
 		(at 97.79 39.37 90)
 		(unit 1)
@@ -955,7 +798,7 @@
 				)
 			)
 		)
-		(property "Value" "tbd"
+		(property "Value" "2nh"
 			(at 97.79 36.83 90)
 			(effects
 				(font
@@ -1006,35 +849,43 @@
 		)
 	)
 	(symbol
-		(lib_id "Device:L")
-		(at 85.09 43.18 180)
+		(lib_id "ESP-32-C6:WE-MCA_74889102450")
+		(at 104.14 69.85 0)
+		(mirror y)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "54b4970e-ed96-480b-92db-6e280c996be3")
-		(property "Reference" "L3"
-			(at 86.36 41.9099 0)
+		(uuid "8f1d00a8-2bf5-42c1-884b-59a44d5797d5")
+		(property "Reference" "AE1"
+			(at 104.14 57.15 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify right)
 			)
 		)
-		(property "Value" "2nH"
-			(at 86.36 44.4499 0)
+		(property "Value" "WE-MCA_74889102450"
+			(at 104.14 59.69 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify right)
 			)
 		)
-		(property "Footprint" "Inductor_SMD:L_0603_1608Metric"
-			(at 85.09 43.18 0)
+		(property "Footprint" "Library:WE-MCA_74889102450"
+			(at 104.14 69.85 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify bottom)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" ""
+			(at 104.14 69.85 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1042,17 +893,8 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "~"
-			(at 85.09 43.18 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Inductor"
-			(at 85.09 43.18 0)
+		(property "Description" ""
+			(at 104.14 69.85 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1061,348 +903,15 @@
 			)
 		)
 		(pin "2"
-			(uuid "ca75d168-4380-4e17-a508-af65f97bc686")
+			(uuid "023ff761-0417-472b-ad2f-3a8a5f0a785e")
 		)
 		(pin "1"
-			(uuid "eaef5d7e-24de-4b5c-9f29-561653bae36d")
+			(uuid "bd58eee5-d2af-47e9-9793-2e34610fe1db")
 		)
 		(instances
-			(project "CanaryCap"
+			(project ""
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/62cbd03f-2971-4d14-9dc5-93962962f3ed"
-					(reference "L3")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:C")
-		(at 105.41 43.18 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(uuid "57c304f7-46a8-4609-972a-4b27c82c7bf0")
-		(property "Reference" "C24"
-			(at 109.728 42.164 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "tbd"
-			(at 109.22 44.4499 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric_Pad1.08x0.95mm_HandSolder"
-			(at 106.3752 46.99 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 105.41 43.18 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Unpolarized capacitor"
-			(at 105.41 43.18 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "2"
-			(uuid "adf3f48d-03e3-43f4-ae38-a9346c26b345")
-		)
-		(pin "1"
-			(uuid "3aa6b592-d928-4e91-9eee-a5c51282331a")
-		)
-		(instances
-			(project "CanaryCap"
-				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/62cbd03f-2971-4d14-9dc5-93962962f3ed"
-					(reference "C24")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:L")
-		(at 63.5 39.37 90)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "65383ba4-0ec2-4df7-abb9-76e18ece2961")
-		(property "Reference" "L2"
-			(at 63.5 34.29 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "tbd"
-			(at 63.5 36.83 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Inductor_SMD:L_0603_1608Metric"
-			(at 63.5 39.37 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 63.5 39.37 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Inductor"
-			(at 63.5 39.37 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "2"
-			(uuid "cb2f941e-f73c-4ae4-9e9c-57f40ba4f005")
-		)
-		(pin "1"
-			(uuid "aa7f639d-609a-422c-8f3b-ee423613a47e")
-		)
-		(instances
-			(project "CanaryCap"
-				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/62cbd03f-2971-4d14-9dc5-93962962f3ed"
-					(reference "L2")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "power:GNDREF")
-		(at 85.09 49.53 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(uuid "6cc1e375-7cb8-4779-afba-43a75b8c7723")
-		(property "Reference" "#PWR041"
-			(at 85.09 55.88 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Value" "GNDREF"
-			(at 90.424 54.356 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 85.09 49.53 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" ""
-			(at 85.09 49.53 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"GNDREF\" , reference supply ground"
-			(at 85.09 49.53 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "1f0cd1d7-172c-49fa-a1a0-8885817a3a84")
-		)
-		(instances
-			(project "CanaryCap"
-				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/62cbd03f-2971-4d14-9dc5-93962962f3ed"
-					(reference "#PWR041")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "power:GNDREF")
-		(at 57.15 49.53 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(uuid "b861f2c1-92f8-4d7d-a7ed-ecb1a2bb1b2d")
-		(property "Reference" "#PWR039"
-			(at 57.15 55.88 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Value" "GNDREF"
-			(at 62.484 54.356 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 57.15 49.53 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" ""
-			(at 57.15 49.53 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"GNDREF\" , reference supply ground"
-			(at 57.15 49.53 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "f4bd0237-54ed-48da-abab-ee43feb967b8")
-		)
-		(instances
-			(project "CanaryCap"
-				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/62cbd03f-2971-4d14-9dc5-93962962f3ed"
-					(reference "#PWR039")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "power:GNDREF")
-		(at 71.12 49.53 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "bf25a004-5bc7-48bd-ab54-28664cb7180b")
-		(property "Reference" "#PWR040"
-			(at 71.12 55.88 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Value" "GNDREF"
-			(at 71.12 54.61 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 71.12 49.53 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" ""
-			(at 71.12 49.53 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"GNDREF\" , reference supply ground"
-			(at 71.12 49.53 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "76784864-d4bb-404a-b591-97cc7855530a")
-		)
-		(instances
-			(project "CanaryCap"
-				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/62cbd03f-2971-4d14-9dc5-93962962f3ed"
-					(reference "#PWR040")
+					(reference "AE1")
 					(unit 1)
 				)
 			)
@@ -1468,72 +977,6 @@
 			(project "CanaryCap"
 				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/62cbd03f-2971-4d14-9dc5-93962962f3ed"
 					(reference "#PWR042")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "power:GNDREF")
-		(at 105.41 49.53 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "db355496-16c3-4dbf-a3ef-d4c75e242b1a")
-		(property "Reference" "#PWR043"
-			(at 105.41 55.88 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Value" "GNDREF"
-			(at 105.41 54.61 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 105.41 49.53 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" ""
-			(at 105.41 49.53 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"GNDREF\" , reference supply ground"
-			(at 105.41 49.53 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "93fc1b49-2fe1-42c3-be99-3b21147f5b73")
-		)
-		(instances
-			(project "CanaryCap"
-				(path "/406ad30e-b04c-4bb7-9588-aab8ab73084a/62cbd03f-2971-4d14-9dc5-93962962f3ed"
-					(reference "#PWR043")
 					(unit 1)
 				)
 			)
