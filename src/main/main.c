@@ -39,6 +39,17 @@ static adc_channel_t
 static TaskHandle_t s_task_handle;
 static const char *TAG = "EXAMPLE";
 
+//configuring the processor to run at 40MHz
+
+esp_pm_config_t pm_config = {
+    .max_freq_mhz = 40,
+    .min_freq_mhz = 40,
+    .light_sleep_enable = true,  // Optional
+};
+esp_pm_configure(&pm_config);
+
+//Configuring the ADC to run continuously at 
+
 static bool IRAM_ATTR s_conv_done_cb(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data)
 {
     BaseType_t mustYield = pdFALSE;
@@ -59,7 +70,7 @@ static void continuous_adc_init(adc_channel_t *channel, uint8_t channel_num, adc
     ESP_ERROR_CHECK(adc_continuous_new_handle(&adc_config, &handle));
 
     adc_continuous_config_t dig_cfg = {
-        .sample_freq_hz = 20 * 1000,
+        .sample_freq_hz = 100 * 1000,
         .conv_mode = EXAMPLE_ADC_CONV_MODE,
     };
 
@@ -198,6 +209,39 @@ static void esp_zb_task(void *pvParameters)
     ESP_ERROR_CHECK(esp_zb_start(false));
     esp_zb_stack_main_loop();
 }
+
+//Memory Storage
+
+
+nvs_handle_t nvs_handle;
+nvs_open("storage", NVS_READWRITE, &nvs_handle);
+nvs_set_i32(nvs_handle, "impact_1", value);
+nvs_commit(nvs_handle);
+nvs_close(nvs_handle);
+
+//buzzer
+
+ledc_timer_config_t ledc_timer = {
+    .speed_mode = LEDC_LOW_SPEED_MODE,
+    .timer_num = LEDC_TIMER_0,
+    .freq_hz = 2000,  // Buzzer freq (1-4kHz typical)
+    .duty_resolution = LEDC_TIMER_10_BIT,
+    .clk_cfg = LEDC_AUTO_CLK,
+};
+ledc_timer_config(&ledc_timer);
+
+ledc_channel_config_t ledc_channel = {
+    .channel = LEDC_CHANNEL_0,
+    .duty = 512,  // 50%
+    .gpio_num = GPIO_NUM_18,
+    .speed_mode = LEDC_LOW_SPEED_MODE,
+    .hpoint = 0,
+    .timer_sel = LEDC_TIMER_0
+};
+ledc_channel_config(&ledc_channel);
+
+
+
 
 void app_main(void)
 {
