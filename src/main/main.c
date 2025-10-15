@@ -28,7 +28,7 @@
 #if CONFIG_IDF_TARGET_ESP32
 static adc_channel_t channel[2] = {ADC_CHANNEL_6, ADC_CHANNEL_7};
 #else
-static adc_channel_t channel[1] = {ADC_CHANNEL_4};
+static adc_channel_t channel[1] = {ADC_CHANNEL_4}; //reading off GPIO4 for ADC
 #endif
 
 #if !defined ZB_ED_ROLE
