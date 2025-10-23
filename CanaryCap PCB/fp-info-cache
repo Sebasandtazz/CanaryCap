@@ -1,4 +1,4 @@
-26641650318797231
+26652217804695695
 Audio_Module
 Reverb_BTDR-1H
 Digital Reverberation Unit, http://www.belton.co.kr/inc/downfile.php?seq=17&file=pdf (footprint from http://www.uk-electronic.de/PDF/BTDR-1.pdf)
@@ -70560,6 +70560,13 @@ FW4000044Q
 4
 4
 Library
+H3LIS100DLTR
+
+
+0
+16
+16
+Library
 Untitled
 
 
@@ -70574,7 +70581,42 @@ Untitled_1
 0
 0
 Library
+Untitled_2
+
+
+0
+0
+0
+Library
+Untitled_3
+
+
+0
+0
+0
+Library
+Untitled_4
+
+
+0
+0
+0
+Library
 WE-MCA_74889102450
+
+
+0
+2
+2
+Library
+XCVR_ESP32-C6-WROOM-1-N8
+
+
+0
+49
+49
+Library
+XDCR_AT-1440-TT-R
 
 
 0
