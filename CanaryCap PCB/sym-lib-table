@@ -1,4 +1,6 @@
 (sym_lib_table
   (version 7)
   (lib (name "ESP-32-C6")(type "KiCad")(uri "${KIPRJMOD}/CanaryLib.pretty/ESP-32-C6.kicad_sym")(options "")(descr ""))
+  (lib (name "AT-1440-TT-R")(type "KiCad")(uri "/Users/justinbetz/Downloads/AT_1440_TT_R/AT-1440-TT-R.kicad_sym")(options "")(descr ""))
+  (lib (name "ESP32-C6-WROOM-1-N8")(type "KiCad")(uri "/Users/justinbetz/Downloads/ESP32_C6_WROOM_1_N8/ESP32-C6-WROOM-1-N8.kicad_sym")(options "")(descr ""))
 )
