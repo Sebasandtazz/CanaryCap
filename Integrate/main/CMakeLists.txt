@@ -1,9 +1,7 @@
-idf_component_register(SRCS "main.c"
-                    PRIV_REQUIRES esp_adc
-                    PRIV_REQUIRES esp_driver_ledc esp_driver_gpio nvs_flash
-                    INCLUDE_DIRS "."
-                    SRC_DIRS  "." "../../esp-zigbee-sdk/examples/common/zcl_utility/src"
-                    INCLUDE_DIRS "." "../../esp-zigbee-sdk/examples/common/zcl_utility/include"
-                    REQUIRES spiffs switch_driver
-                    REQUIRES espressif__esp-zigbee-lib espressif__esp-zboss-lib
-                    REQUIRES led_strip)
+idf_component_register(
+    SRCS "main.c"
+    SRC_DIRS "." "../../esp-zigbee-sdk/examples/common/zcl_utility/src" "../../esp-zigbee-sdk/examples/common/switch_driver"
+    INCLUDE_DIRS "." "../../esp-zigbee-sdk/examples/common/zcl_utility/include"
+    PRIV_REQUIRES esp_adc esp_driver_ledc esp_driver_gpio nvs_flash esp_timer driver
+    REQUIRES spiffs switch_driver esp-zigbee-lib esp-zboss-lib led_strip
+)

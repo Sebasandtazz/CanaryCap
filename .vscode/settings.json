@@ -6,12 +6,13 @@
     "sdkconfig.h": "c",
     "led_strip.h": "c",
     "esp_log.h": "c",
-    "freertos.h": "c"
+    "freertos.h": "c",
+    "ledc.h": "c"
   },
   "idf.openOcdConfigs": [
     "board/esp32c6-ftdi.cfg"
   ],
   "idf.espIdfPathWin": "C:\\Users\\sebas\\esp\\v5.5.1\\esp-idf",
   "idf.toolsPathWin": "C:\\Users\\sebas\\.espressif",
-  "idf.pythonInstallPath": "C:\\Users\\sebas\\.espressif\\tools\\idf-python\\3.11.2\\python.exe"
+  "idf.pythonInstallPath": "/Users/justinbetz/anaconda3/bin/python3"
 }
