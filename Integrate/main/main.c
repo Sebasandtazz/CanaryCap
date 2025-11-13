@@ -41,17 +41,17 @@
 //Definitions for SPI and ADXL345
 static const char *TAGSPI = "ADXL345";
 
-#define I2C_MASTER_SCL_IO           9 //CONFIG_I2C_MASTER_SCL
-#define I2C_MASTER_SDA_IO           8 //CONFIG_I2C_MASTER_SDA
-#define LED_GPIO1                   12//CONFIG_LED_GPIO
+#define I2C_MASTER_SCL_IO           9 // SCL on ESP32-C6 (GPIO1) - using bit-bang
+#define I2C_MASTER_SDA_IO           8 // SDA on ESP32-C6 (GPIO0) - using bit-bang
+#define LED_GPIO1                   18 //CONFIG_LED_GPIO
 #define LED_GPIO2                   13 //CONFIG_LED_GPIO
 
 #define BUTTON_GPIO                 15 //CONFIG_BUTTON_GPIO
-#define BUZZER_GPIO                 20 //CONFIG_BUZZER_GPIO
+#define BUZZER_GPIO                 17 //CONFIG_BUZZER_GPIO
 
 #define I2C_MASTER_NUM              I2C_NUM_0
-#define I2C_MASTER_FREQ_HZ          100000
-#define I2C_MASTER_TIMEOUT_MS       1000
+#define I2C_MASTER_FREQ_HZ          100000  // Start with standard 100kHz I2C speed
+#define I2C_MASTER_TIMEOUT_MS       5000    // Increased timeout for reliability
 
 #define ADXL345_ADDR                0x53
 #define ADXL345_DEVID_REG           0x00
@@ -75,7 +75,7 @@ static int impact_count = 0;
 //Def for Buzzer
 #define LEDC_TIMER              LEDC_TIMER_0
 #define LEDC_MODE               LEDC_LOW_SPEED_MODE
-#define LEDC_OUTPUT_IO          (2) // Define the output GPIO
+#define LEDC_OUTPUT_IO          (19) // Define the output GPIO
 #define LEDC_CHANNEL            LEDC_CHANNEL_0
 #define LEDC_DUTY_RES           LEDC_TIMER_13_BIT // Set duty resolution to 13 bits
 #define LEDC_DUTY               (4096) // Set duty to 50%. (2 ** 13) * 50% = 4096
@@ -88,7 +88,7 @@ static int impact_count = 0;
 #define EXAMPLE_ADC_BIT_WIDTH               SOC_ADC_DIGI_MAX_BITWIDTH
 #define EXAMPLE_READ_LEN                    256
 #define ADC_MAX_VAL                         4095
-#define ADC_REF_VAL                         1700 //3.3 Volts for comparison if harmful gas
+#define ADC_REF_VAL                         3300 // Reference in mV (approx 3.3V Vref)
 
 //Def for zb
 #if defined ZB_ED_ROLE
@@ -107,7 +107,7 @@ static switch_func_pair_t button_func_pair[] = {
 static const char *TAGZB = "ESP_ZB_ON_OFF_SWITCH";
 
 
-static adc_channel_t channel[1] = {ADC_CHANNEL_3};
+static adc_channel_t channel[1] = {ADC_CHANNEL_6};  // GPIO11 on ESP32-C6
 static TaskHandle_t s_task_handle;
 static const char *TAGADC = "ADC UNIT";
 
@@ -137,15 +137,416 @@ static void init_spiffs(void)
     }
 }
 
+// ============================================================================
+// Software I2C (Bit-Banging) Implementation for GPIO0 and GPIO1
+// ============================================================================
+
+#define I2C_DELAY_US 50  // Delay in microseconds for I2C timing (increased for weak pull-ups)
+
+typedef struct {
+    int sda_pin;
+    int scl_pin;
+} soft_i2c_t;
+
+static soft_i2c_t soft_i2c = {
+    .sda_pin = I2C_MASTER_SDA_IO,
+    .scl_pin = I2C_MASTER_SCL_IO,
+};
+
+// Initialize GPIO pins for software I2C (open-drain mode)
+static void soft_i2c_init(void)
+{
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << soft_i2c.sda_pin) | (1ULL << soft_i2c.scl_pin),
+        .mode = GPIO_MODE_OUTPUT_OD,  // Open-drain for I2C
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_conf);
+    
+    // Ensure pull-ups are enabled at pad level
+    
+    // Release lines (set high) and wait for pull-ups
+    gpio_set_level(soft_i2c.sda_pin, 1);
+    gpio_set_level(soft_i2c.scl_pin, 1);
+        esp_rom_delay_us(200);  // Give pull-ups time to work
+    
+    ESP_LOGI(TAGSPI, "Software I2C initialized on GPIO%d (SCL), GPIO%d (SDA)", 
+             soft_i2c.scl_pin, soft_i2c.sda_pin);
+}
+
+// Diagnostic function to test I2C bus
+static void soft_i2c_diagnose(void)
+{
+    ESP_LOGI(TAGSPI, "=== I2C Bus Diagnostic ===");
+    
+    // Check if lines are high (good)
+    int sda_level = gpio_get_level(soft_i2c.sda_pin);
+    int scl_level = gpio_get_level(soft_i2c.scl_pin);
+    ESP_LOGI(TAGSPI, "Bus levels - SDA: %d, SCL: %d (both should be 1)", sda_level, scl_level);
+    
+    if (sda_level == 0) ESP_LOGW(TAGSPI, "ERROR: SDA stuck low! Check pull-ups");
+    if (scl_level == 0) ESP_LOGW(TAGSPI, "ERROR: SCL stuck low! Check pull-ups");
+    
+    // Try a START condition
+    ESP_LOGI(TAGSPI, "Testing START condition...");
+    gpio_set_level(soft_i2c.sda_pin, 1);
+    gpio_set_level(soft_i2c.scl_pin, 1);
+    esp_rom_delay_us(10);
+    gpio_set_level(soft_i2c.sda_pin, 0);  // SDA goes low
+    esp_rom_delay_us(10);
+    sda_level = gpio_get_level(soft_i2c.sda_pin);
+    scl_level = gpio_get_level(soft_i2c.scl_pin);
+    ESP_LOGI(TAGSPI, "After START - SDA: %d, SCL: %d (should be 0, 1)", sda_level, scl_level);
+    
+    // Try a STOP condition
+    ESP_LOGI(TAGSPI, "Testing STOP condition...");
+    gpio_set_level(soft_i2c.scl_pin, 0);
+    esp_rom_delay_us(10);
+    gpio_set_level(soft_i2c.scl_pin, 1);
+    esp_rom_delay_us(10);
+    gpio_set_level(soft_i2c.sda_pin, 1);  // SDA goes high
+    esp_rom_delay_us(10);
+    sda_level = gpio_get_level(soft_i2c.sda_pin);
+    scl_level = gpio_get_level(soft_i2c.scl_pin);
+    ESP_LOGI(TAGSPI, "After STOP - SDA: %d, SCL: %d (should be 1, 1)", sda_level, scl_level);
+    
+    ESP_LOGI(TAGSPI, "=== End Diagnostic ===");
+}
+
+// Quick pin health check performed before we reconfigure pins for bit-bang.
+// This reads the pins in a few configurations so we can compare MCU readings
+// with your oscilloscope. Keep it very short to avoid changing board state.
+static void soft_i2c_pin_health_check(void)
+{
+    ESP_LOGI(TAGSPI, "=== I2C Pin Health Check (pre-config) ===");
+
+    // Read raw levels as the pins currently are (bootloader/ROM state)
+    int raw_sda = gpio_get_level(I2C_MASTER_SDA_IO);
+    int raw_scl = gpio_get_level(I2C_MASTER_SCL_IO);
+    ESP_LOGI(TAGSPI, "Raw levels before config - SDA(GPIO%d): %d, SCL(GPIO%d): %d",
+             I2C_MASTER_SDA_IO, raw_sda, I2C_MASTER_SCL_IO, raw_scl);
+
+    // Configure as inputs without pull to see passive level
+    gpio_config_t io_in_none = {
+        .pin_bit_mask = (1ULL << I2C_MASTER_SDA_IO) | (1ULL << I2C_MASTER_SCL_IO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_in_none);
+    esp_rom_delay_us(200);
+    int in_none_sda = gpio_get_level(I2C_MASTER_SDA_IO);
+    int in_none_scl = gpio_get_level(I2C_MASTER_SCL_IO);
+    ESP_LOGI(TAGSPI, "Input(no pull) - SDA: %d, SCL: %d", in_none_sda, in_none_scl);
+
+    // Configure as inputs with internal pull-up
+    gpio_config_t io_in_pu = io_in_none;
+    io_in_pu.pull_up_en = GPIO_PULLUP_ENABLE;
+    gpio_config(&io_in_pu);
+    esp_rom_delay_us(200);
+    int in_pu_sda = gpio_get_level(I2C_MASTER_SDA_IO);
+    int in_pu_scl = gpio_get_level(I2C_MASTER_SCL_IO);
+    ESP_LOGI(TAGSPI, "Input(with pull-up) - SDA: %d, SCL: %d", in_pu_sda, in_pu_scl);
+
+    // Configure as open-drain outputs and drive high (release) then sample
+    gpio_config_t io_od = {
+        .pin_bit_mask = (1ULL << I2C_MASTER_SDA_IO) | (1ULL << I2C_MASTER_SCL_IO),
+        .mode = GPIO_MODE_OUTPUT_OD,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_od);
+    // Release lines
+    gpio_set_level(I2C_MASTER_SDA_IO, 1);
+    gpio_set_level(I2C_MASTER_SCL_IO, 1);
+    esp_rom_delay_us(200);
+    int od_rel_sda = gpio_get_level(I2C_MASTER_SDA_IO);
+    int od_rel_scl = gpio_get_level(I2C_MASTER_SCL_IO);
+    ESP_LOGI(TAGSPI, "OD release - SDA: %d, SCL: %d", od_rel_sda, od_rel_scl);
+
+    // Drive lines low (simulate bus held low) and sample
+    gpio_set_level(I2C_MASTER_SDA_IO, 0);
+    gpio_set_level(I2C_MASTER_SCL_IO, 0);
+    esp_rom_delay_us(200);
+    int od_low_sda = gpio_get_level(I2C_MASTER_SDA_IO);
+    int od_low_scl = gpio_get_level(I2C_MASTER_SCL_IO);
+    ESP_LOGI(TAGSPI, "OD drive low - SDA: %d, SCL: %d", od_low_sda, od_low_scl);
+
+    ESP_LOGI(TAGSPI, "=== End Pin Health Check ===");
+}
+
+// Delay for I2C timing
+static inline void soft_i2c_delay(void)
+{
+    esp_rom_delay_us(I2C_DELAY_US);
+}
+
+// Start condition: SDA goes low while SCL is high
+static void soft_i2c_start(void)
+{
+    gpio_set_level(soft_i2c.sda_pin, 1);
+    soft_i2c_delay();
+    gpio_set_level(soft_i2c.scl_pin, 1);
+    soft_i2c_delay();
+    gpio_set_level(soft_i2c.sda_pin, 0);
+    soft_i2c_delay();
+    gpio_set_level(soft_i2c.scl_pin, 0);
+    soft_i2c_delay();
+}
+
+// Stop condition: SDA goes high while SCL is high
+static void soft_i2c_stop(void)
+{
+    gpio_set_level(soft_i2c.sda_pin, 0);
+    soft_i2c_delay();
+    gpio_set_level(soft_i2c.scl_pin, 1);
+    soft_i2c_delay();
+    gpio_set_level(soft_i2c.sda_pin, 1);
+    soft_i2c_delay();
+}
+
+// Send one bit on I2C bus
+static void soft_i2c_send_bit(uint8_t bit)
+{
+    gpio_set_level(soft_i2c.sda_pin, bit ? 1 : 0);
+    soft_i2c_delay();
+    gpio_set_level(soft_i2c.scl_pin, 1);
+    soft_i2c_delay();
+    gpio_set_level(soft_i2c.scl_pin, 0);
+    soft_i2c_delay();
+}
+
+// Receive one bit from I2C bus
+static uint8_t soft_i2c_recv_bit(void)
+{
+    uint8_t bit;
+    gpio_set_level(soft_i2c.sda_pin, 1);  // Release line for slave to pull
+    soft_i2c_delay();
+    gpio_set_level(soft_i2c.scl_pin, 1);
+    soft_i2c_delay();
+    bit = gpio_get_level(soft_i2c.sda_pin);
+    gpio_set_level(soft_i2c.scl_pin, 0);
+    soft_i2c_delay();
+    return bit;
+}
+
+// Send one byte on I2C bus, return true if ACK received
+static bool soft_i2c_send_byte(uint8_t byte)
+{
+    // Send 8 bits, MSB first
+    for (int i = 7; i >= 0; i--) {
+        soft_i2c_send_bit((byte >> i) & 1);
+    }
+    // Receive ACK bit (slave pulls SDA low)
+    bool ack = (soft_i2c_recv_bit() == 0);
+    return ack;
+}
+
+// Receive one byte from I2C bus, send ACK if ack_flag is true
+static uint8_t soft_i2c_recv_byte(bool send_ack)
+{
+    uint8_t byte = 0;
+    // Receive 8 bits, MSB first
+    for (int i = 7; i >= 0; i--) {
+        uint8_t bit = soft_i2c_recv_bit();
+        byte |= (bit << i);
+        ESP_LOGV(TAGSPI, "I2C recv bit[%d]=%d, byte so far=0x%02X", 7-i, bit, byte);
+    }
+    // Send ACK or NAK
+    soft_i2c_send_bit(send_ack ? 0 : 1);
+    ESP_LOGV(TAGSPI, "I2C recv complete: 0x%02X (ACK=%d)", byte, send_ack);
+    return byte;
+}
+
+// Send address and check for ACK
+static bool soft_i2c_send_addr(uint8_t addr, uint8_t read_write)
+{
+    uint8_t addr_byte = (addr << 1) | (read_write & 1);
+    return soft_i2c_send_byte(addr_byte);
+}
+
+// I2C write: address + data bytes
+static esp_err_t soft_i2c_write(uint8_t addr, const uint8_t *data, size_t len)
+{
+    soft_i2c_start();
+    
+    // Send address with write bit
+    if (!soft_i2c_send_addr(addr, 0)) {
+        ESP_LOGW(TAGSPI, "I2C: No ACK from slave at address 0x%02X", addr);
+        soft_i2c_stop();
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Send data bytes
+    for (size_t i = 0; i < len; i++) {
+        if (!soft_i2c_send_byte(data[i])) {
+            ESP_LOGW(TAGSPI, "I2C: No ACK after data byte %d", i);
+            soft_i2c_stop();
+            return ESP_ERR_INVALID_RESPONSE;
+        }
+    }
+    
+    soft_i2c_stop();
+    return ESP_OK;
+}
+
+// I2C read: address + read data bytes
+static esp_err_t soft_i2c_read(uint8_t addr, uint8_t *data, size_t len)
+{
+    soft_i2c_start();
+    
+    // Send address with read bit
+    if (!soft_i2c_send_addr(addr, 1)) {
+        ESP_LOGW(TAGSPI, "I2C: No ACK from slave at address 0x%02X (read)", addr);
+        soft_i2c_stop();
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Receive data bytes
+    for (size_t i = 0; i < len; i++) {
+        bool send_ack = (i < len - 1);  // Send ACK for all but last byte
+        data[i] = soft_i2c_recv_byte(send_ack);
+    }
+    
+    soft_i2c_stop();
+    return ESP_OK;
+}
+
+// I2C write + read (repeated start)
+static esp_err_t soft_i2c_write_read(uint8_t addr, const uint8_t *write_data, size_t write_len,
+                                       uint8_t *read_data, size_t read_len)
+{
+    soft_i2c_start();
+    
+    // Send address with write bit
+    if (!soft_i2c_send_addr(addr, 0)) {
+        ESP_LOGW(TAGSPI, "I2C: No ACK from slave at address 0x%02X (write_read)", addr);
+        soft_i2c_stop();
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Send write data
+    for (size_t i = 0; i < write_len; i++) {
+        if (!soft_i2c_send_byte(write_data[i])) {
+            ESP_LOGW(TAGSPI, "I2C: No ACK after write data byte %d", i);
+            soft_i2c_stop();
+            return ESP_ERR_INVALID_RESPONSE;
+        }
+    }
+    
+    // Repeated start
+    soft_i2c_start();
+    
+    // Send address with read bit
+    if (!soft_i2c_send_addr(addr, 1)) {
+        ESP_LOGW(TAGSPI, "I2C: No ACK from slave at address 0x%02X (repeated read)", addr);
+        soft_i2c_stop();
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Receive read data
+    for (size_t i = 0; i < read_len; i++) {
+        bool send_ack = (i < read_len - 1);
+        read_data[i] = soft_i2c_recv_byte(send_ack);
+    }
+    
+    soft_i2c_stop();
+    return ESP_OK;
+}
+
+// ============================================================================
+// ADXL345 functions adapted for software I2C
+// ============================================================================
+
 static esp_err_t adxl345_register_read(i2c_master_dev_handle_t dev_handle, uint8_t reg_addr, uint8_t *data, size_t len)
 {
-    return i2c_master_transmit_receive(dev_handle, &reg_addr, 1, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+    const int max_retries = 3;
+    esp_err_t ret;
+
+    uint8_t reg = reg_addr;
+    if (len > 1) {
+        reg |= 0x80; // ADXL345 multi-byte read flag (MSB)
+    }
+
+    for (int i = 0; i < max_retries; ++i) {
+        // Use software I2C for bit-bang communication
+        ret = soft_i2c_write_read(ADXL345_ADDR, &reg, 1, data, len);
+        if (ret == ESP_OK) return ESP_OK;
+        ESP_LOGW(TAGSPI, "adxl345_register_read retry %d failed: %s", i + 1, esp_err_to_name(ret));
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    return ret;
+}
+
+/* Simple runtime probe: read DEVID and log result. Returns ESP_OK if device responds. */
+static esp_err_t adxl_probe(i2c_master_dev_handle_t dev_handle)
+{
+    uint8_t devid = 0;
+    esp_err_t ret = adxl345_register_read(dev_handle, ADXL345_DEVID_REG, &devid, 1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAGSPI, "I2C probe failed communicating with ADXL345: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAGSPI, "Check connections: SCL=GPIO%d, SDA=GPIO%d, ADDR=0x%02X", 
+                 I2C_MASTER_SCL_IO, I2C_MASTER_SDA_IO, ADXL345_ADDR);
+        return ret;
+    }
+    ESP_LOGI(TAGSPI, "ADXL345 probe successful: DEVID=0x%02X", devid);
+    if (devid != ADXL345_DEVID_EXPECTED) {
+        ESP_LOGW(TAGSPI, "Unexpected ADXL345 DEVID: got 0x%02X, expected 0x%02X", devid, ADXL345_DEVID_EXPECTED);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    return ESP_OK;
 }
 
 static esp_err_t adxl345_register_write_byte(i2c_master_dev_handle_t dev_handle, uint8_t reg_addr, uint8_t data)
 {
     uint8_t write_buf[2] = { reg_addr, data };
-    return i2c_master_transmit(dev_handle, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+    const int max_retries = 3;
+    esp_err_t ret;
+    for (int i = 0; i < max_retries; ++i) {
+        // Use software I2C for bit-bang communication
+        ret = soft_i2c_write(ADXL345_ADDR, write_buf, sizeof(write_buf));
+        if (ret == ESP_OK) return ESP_OK;
+        ESP_LOGW(TAGSPI, "adxl345_register_write_byte retry %d failed: %s", i + 1, esp_err_to_name(ret));
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    return ret;
+}
+
+static void i2c_bus_recovery(int scl_pin, int sda_pin)
+{
+    // Configure pins as GPIO output, open-drain
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << scl_pin) | (1ULL << sda_pin),
+        .mode = GPIO_MODE_OUTPUT_OD,  // Open-drain
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_conf);
+    
+    // Generate 9 clock pulses to recover from stuck slave
+    for (int i = 0; i < 9; i++) {
+        gpio_set_level(scl_pin, 0);
+        vTaskDelay(pdMS_TO_TICKS(5));
+        gpio_set_level(scl_pin, 1);
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+    
+    // Generate STOP condition
+    gpio_set_level(sda_pin, 0);
+    vTaskDelay(pdMS_TO_TICKS(5));
+    gpio_set_level(scl_pin, 0);
+    vTaskDelay(pdMS_TO_TICKS(5));
+    gpio_set_level(scl_pin, 1);
+    vTaskDelay(pdMS_TO_TICKS(5));
+    gpio_set_level(sda_pin, 1);
+    vTaskDelay(pdMS_TO_TICKS(5));
+    
+    ESP_LOGI(TAGSPI, "I2C bus recovery completed");
 }
 
 static void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle)
@@ -156,7 +557,11 @@ static void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_
         .scl_io_num = I2C_MASTER_SCL_IO,
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
+        .intr_priority = 0,
+        .trans_queue_depth = 0,
+        .flags = {
+            .enable_internal_pullup = true,
+        },
     };
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, bus_handle));
 
@@ -164,6 +569,9 @@ static void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = ADXL345_ADDR,
         .scl_speed_hz = I2C_MASTER_FREQ_HZ,
+        .flags = {
+            .disable_ack_check = false,
+        },
     };
     ESP_ERROR_CHECK(i2c_master_bus_add_device(*bus_handle, &dev_config, dev_handle));
 }
@@ -382,7 +790,7 @@ static void classify_impact(float x_g, float y_g, float z_g){
                 xTimerStart(major_impact_timer,0);
                 log_data_to_spiffs(mag, x_g, y_g, z_g);
                 /* notify Zigbee network (debounced) */
-                send_zigbee_alert_toggle_debounced(5000);
+                //send_zigbee_alert_toggle_debounced(5000);
             }
             
             start_led_blink(LED_GPIO1, 100, 100);
@@ -519,6 +927,12 @@ static void continuous_adc_init(adc_channel_t *channel, uint8_t channel_num, adc
     dig_cfg.adc_pattern = adc_pattern;
     ESP_ERROR_CHECK(adc_continuous_config(handle, &dig_cfg));
 
+    // Register event callback so ADC task gets notified when data is ready
+    adc_continuous_evt_cbs_t cbs = {
+        .on_conv_done = s_conv_done_cb,
+    };
+    ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(handle, &cbs, NULL));
+
     *out_handle = handle;
 }
 
@@ -544,7 +958,7 @@ void log_adc_data_to_spiffs(adc_continuous_data_t *parsed_data, uint32_t num_sam
             if(voltage_mv >= 3300)
             {
                 /* notify Zigbee network (debounced) */
-                send_zigbee_alert_toggle_debounced(5000);
+                //send_zigbee_alert_toggle_debounced(5000);
 
                 fprintf(f, "ADC%d, Channel: %d, Value: %" PRIu32 "\n",
                     parsed_data[i].unit + 1,
@@ -564,7 +978,6 @@ void adc_task(void *param)
     memset(result, 0xcc, EXAMPLE_READ_LEN);
 
     adc_continuous_handle_t handle = (adc_continuous_handle_t)param;
-    ret = adc_continuous_read(handle, result, EXAMPLE_READ_LEN, &ret_num, 0);
 
 
     while (1) {
@@ -578,9 +991,6 @@ void adc_task(void *param)
          * `adc_continuous_read()` here in a loop, with/without a certain block timeout.
          */
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        //ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY));
-        // Update duty to apply the new value
-        //ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL));
         ret = adc_continuous_read(handle, result, EXAMPLE_READ_LEN, &ret_num, 0);
         if (ret == ESP_OK) {
             ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32" bytes", ret, ret_num);
@@ -592,10 +1002,13 @@ void adc_task(void *param)
             if (parse_ret == ESP_OK) {
                 for (int i = 0; i < num_parsed_samples; i++) {
                     if (parsed_data[i].valid) {
-                        ESP_LOGI(TAGADC, "ADC%d, Channel: %d, Voltage: %"PRIu32,
+                        uint32_t raw = parsed_data[i].raw_data;
+                        uint32_t voltage_mv = raw_to_voltage(raw);
+                        ESP_LOGI(TAGADC, "ADC%d Ch%d raw=%"PRIu32" mV=%"PRIu32,
                                 parsed_data[i].unit + 1,
                                 parsed_data[i].channel,
-                                parsed_data[i].raw_data);
+                                raw,
+                                voltage_mv);
                         } 
                         else {
                         ESP_LOGW(TAGADC, "Invalid data [ADC%d_Ch%d_%"PRIu32"]",
@@ -788,39 +1201,40 @@ static void esp_zb_task(void *pvParameters)
 
 static void i2c_task(void *arg)
 {
-    i2c_master_dev_handle_t dev_handle = (i2c_master_dev_handle_t)arg;
+    vTaskDelay(pdMS_TO_TICKS(5000)); // wait for system to stabilize
+    // With software I2C bit-bang, we don't need the dev_handle
+    // The arg parameter is unused in this case
+    (void)arg;
+    
     uint8_t data[6];
 
     while (1) {
-        // Read 6 bytes of acceleration data
-        ESP_ERROR_CHECK(adxl345_register_read(dev_handle, ADXL345_DATAX0_REG, data, 6));
-        
-        // ADXL345 outputs axis data in little-endian format by default.
-        // If sensor configuration changes, update the axis data parsing accordingly.
-        //gpio_set_level(LED_GPIO,1);
-    
-        int16_t x_raw = (int16_t)((data[1] << 8) | data[0]);
-        int16_t y_raw = (int16_t)((data[3] << 8) | data[2]);
-        int16_t z_raw = (int16_t)((data[5] << 8) | data[4]);
+    // Use software I2C to read ADXL345 data - pass NULL for dev_handle
+    esp_err_t ret = adxl345_register_read(NULL, ADXL345_DATAX0_REG, data, 6);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAGSPI, "Failed to read ADXL345 data: %s — will retry after delay", esp_err_to_name(ret));
+        // optional: re-probe device once in a while
+        vTaskDelay(pdMS_TO_TICKS(500));
+        continue; // skip parsing, keep task alive
+    }
 
-        float x_g = x_raw * LSB_TO_G;
-        float y_g = y_raw * LSB_TO_G;
-        float z_g = z_raw * LSB_TO_G -1.0f;//gravity 
-        
-        
-        //ESP_LOGI(TAGSPI, "X=%.3f g, Y=%.3f g, Z=%.3f g", x_g, y_g, z_g);
-        classify_impact(x_g, y_g, z_g);
-        
+    int16_t x_raw = (int16_t)((data[1] << 8) | data[0]);
+    int16_t y_raw = (int16_t)((data[3] << 8) | data[2]);
+    int16_t z_raw = (int16_t)((data[5] << 8) | data[4]);
 
-        /* If the button cancelled a major impact warning in the ISR,
-           perform the non-ISR-safe logging here in task context. */
-        if (major_impact_cancelled_flag) {
-            major_impact_cancelled_flag = false;
-            ESP_LOGI(TAGSPI, "Major impact warning cancelled by button!");
-            stop_led_blink();
-        }
+    float x_g = x_raw * LSB_TO_G;
+    float y_g = y_raw * LSB_TO_G;
+    float z_g = z_raw * LSB_TO_G - 1.0f; // gravity
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+    classify_impact(x_g, y_g, z_g);
+
+    if (major_impact_cancelled_flag) {
+        major_impact_cancelled_flag = false;
+        ESP_LOGI(TAGSPI, "Major impact warning cancelled by button!");
+        stop_led_blink();
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
@@ -829,33 +1243,32 @@ void app_main(void)
     init_spiffs();
     TaskHandle_t adc_task_handle = NULL;
 
-    //uint8_t data[6];
-    uint8_t devid = 0;
-    i2c_master_bus_handle_t bus_handle;
-    i2c_master_dev_handle_t dev_handle;
+    // Initialize software I2C (bit-banging on GPIO0 and GPIO1)
+    // Quick pin health check before we reconfigure pins. This will log the
+    // raw pin levels and try a couple of small experiments so you can compare
+    // what the MCU reads vs your oscilloscope.
+    soft_i2c_pin_health_check();
 
-     // Initialize I2C and attach ADXL345
-    i2c_master_init(&bus_handle, &dev_handle);
-    ESP_LOGI(TAGSPI, "I2C initialized successfully");
+    // Initialize software I2C (bit-banging on GPIO0 and GPIO1)
+    soft_i2c_init();
+    vTaskDelay(pdMS_TO_TICKS(2000));
 
-    // Verify ADXL345 identity
-    esp_err_t ret = adxl345_register_read(dev_handle, ADXL345_DEVID_REG, &devid, 1);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAGSPI, "ADXL345 DEVID = 0x%02X", devid);
-        if (devid != ADXL345_DEVID_EXPECTED) {
-            ESP_LOGE(TAGSPI, "ADXL345 not detected! Expected 0xE5.");
-            return;
-        }
-    } else {
-        ESP_LOGE(TAGSPI, "Failed to communicate with ADXL345 at 0x%02X", ADXL345_ADDR);
-        return;
-    }
+    ESP_LOGI(TAGSPI, "Software I2C initialized (bit-bang mode)");
+
+    // Run I2C bus diagnostics
+    soft_i2c_diagnose();
+
+    // Probe ADXL345 device (with retries) - device handle is NULL for bit-bang
+    // if (adxl_probe(NULL) != ESP_OK) {
+    //     ESP_LOGE(TAGSPI, "ADXL345 probe failed; aborting startup");
+    //     return;
+    // }
 
     // Enable measurement mode
-    ESP_ERROR_CHECK(adxl345_register_write_byte(dev_handle, ADXL345_POWER_CTL_REG, 0x08));
+    ESP_ERROR_CHECK(adxl345_register_write_byte(NULL, ADXL345_POWER_CTL_REG, 0x08));
 
     // Set data format: Full resolution, ±2g range (0x08)
-    ESP_ERROR_CHECK(adxl345_register_write_byte(dev_handle, ADXL345_DATA_FORMAT_REG, 0x08));
+    ESP_ERROR_CHECK(adxl345_register_write_byte(NULL, ADXL345_DATA_FORMAT_REG, 0x08));
     init_led(LED_GPIO1);
     init_led(LED_GPIO2);
     //buzzer_init();
@@ -874,21 +1287,17 @@ void app_main(void)
     gpio_install_isr_service(0);
     gpio_isr_handler_add(BUTTON_GPIO, button_handler, NULL);
 
-    // Create major impact timer (15 sec)
+    // Create major impact timer (10 sec)
     major_impact_timer = xTimerCreate("MajorImpactTimer", pdMS_TO_TICKS(10000), pdFALSE, NULL, major_impact_timer_callback);
-    init_spiffs();
 
-    xTaskCreate(i2c_task, "i2c_task", 4096, dev_handle, 5, NULL);
-
+    // Pass NULL for i2c_task since we're using bit-bang I2C (no i2c_master_dev_handle)
+    xTaskCreate(i2c_task, "i2c_task", 4096, NULL, 5, NULL);
     adc_continuous_handle_t handle = NULL;
     continuous_adc_init(channel, sizeof(channel) / sizeof(adc_channel_t), &handle);
-    // Create major impact timer (15 sec)
-    major_impact_timer = xTimerCreate("MajorImpactTimer", pdMS_TO_TICKS(10000), pdFALSE, NULL, major_impact_timer_callback);
-
-    xTaskCreate(i2c_task, "i2c_task", 4096, NULL, 5, NULL);
+    /* NOTE: i2c_task already created above. Using software I2C bit-bang. */
     ESP_ERROR_CHECK(adc_continuous_start(handle));
 
-    xTaskCreate(adc_task, "adc_task", 4096, handle, 5, &adc_task_handle);
+    //xTaskCreate(adc_task, "adc_task", 4096, handle, 5, &adc_task_handle);
     s_task_handle = adc_task_handle;  // used by ISR callback
 
     esp_zb_platform_config_t config = {
@@ -898,7 +1307,7 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
 
-    xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
+    //xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
 
     //FILE *log_file = fopen("/spiffs/adc_log.txt", "a");
     // Removed unused log file opening and closing to prevent resource leaks.
