@@ -2259,7 +2259,7 @@
 				)
 			)
 		)
-		(property "Value" "LM3940 3.3V-SOT223"
+		(property "Value" "NCP1117-3.3_SOT223"
 			(at 146.05 77.47 0)
 			(effects
 				(font

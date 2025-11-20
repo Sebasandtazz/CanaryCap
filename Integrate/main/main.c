@@ -42,9 +42,15 @@
 //Definitions for SPI and ADXL345
 static const char *TAGSPI = "ADXL345";
 
+<<<<<<< Updated upstream
 #define I2C_MASTER_SCL_IO           9 // SCL on ESP32-C6 (GPIO1) - using bit-bang
 #define I2C_MASTER_SDA_IO           8 // SDA on ESP32-C6 (GPIO0) - using bit-bang
 #define LED_GPIO1                   18 //CONFIG_LED_GPIO
+=======
+#define I2C_MASTER_SCL_IO           1 //CONFIG_I2C_MASTER_SCL
+#define I2C_MASTER_SDA_IO           0 //CONFIG_I2C_MASTER_SDA
+#define LED_GPIO1                   12//CONFIG_LED_GPIO
+>>>>>>> Stashed changes
 #define LED_GPIO2                   13 //CONFIG_LED_GPIO
 
 #define BUTTON_GPIO                 15 //CONFIG_BUTTON_GPIO
@@ -156,6 +162,10 @@ static esp_err_t adxl345_register_write_byte(i2c_master_dev_handle_t dev_handle,
 
 static void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle)
 {
+    gpio_reset_pin(GPIO_NUM_6);
+    gpio_set_direction(GPIO_NUM_6, GPIO_MODE_INPUT_OUTPUT);
+
+   
     i2c_master_bus_config_t bus_config = {
         .i2c_port = I2C_MASTER_NUM,
         .sda_io_num = I2C_MASTER_SDA_IO,

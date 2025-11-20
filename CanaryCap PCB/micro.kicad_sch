@@ -2622,7 +2622,7 @@
 	)
 	(global_label "BUZZER"
 		(shape output)
-		(at 190.5 62.23 0)
+		(at 190.5 59.69 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -2632,7 +2632,7 @@
 		)
 		(uuid "065bc187-ff00-4f07-8157-c291b6ddf35f")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 200.9237 62.23 0)
+			(at 200.9237 59.69 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2644,7 +2644,7 @@
 	)
 	(global_label "PENDING"
 		(shape output)
-		(at 190.5 72.39 0)
+		(at 190.5 69.85 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -2654,7 +2654,7 @@
 		)
 		(uuid "0d52d24a-d1b4-48d0-a5cb-b37f17908094")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 201.71 72.39 0)
+			(at 201.71 69.85 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2820,22 +2820,22 @@
 	)
 	(global_label "Impact_CLK"
 		(shape bidirectional)
-		(at 149.86 49.53 180)
+		(at 190.5 44.45 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify right)
+			(justify left)
 		)
 		(uuid "52bd64f4-b8a4-444d-a0ae-689c79cf368b")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 134.8174 49.53 0)
+			(at 205.5426 44.45 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify right)
+				(justify left)
 				(hide yes)
 			)
 		)
@@ -2864,7 +2864,7 @@
 	)
 	(global_label "HEALTH"
 		(shape output)
-		(at 190.5 67.31 0)
+		(at 190.5 64.77 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -2874,7 +2874,7 @@
 		)
 		(uuid "7ef643fd-aafc-470d-b680-eb2d81cec432")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 200.3795 67.31 0)
+			(at 200.3795 64.77 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2886,22 +2886,22 @@
 	)
 	(global_label "GAS_IN"
 		(shape input)
-		(at 190.5 44.45 0)
+		(at 149.86 54.61 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify left)
+			(justify right)
 		)
 		(uuid "94499690-fd5c-4902-bd7d-dcad5c710fce")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 199.9562 44.45 0)
+			(at 140.4038 54.61 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 				(hide yes)
 			)
 		)
@@ -2996,22 +2996,22 @@
 	)
 	(global_label "GAS_DIG_IN"
 		(shape input)
-		(at 190.5 41.91 0)
+		(at 149.86 52.07 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify left)
+			(justify right)
 		)
 		(uuid "b060316d-32e3-4a63-8745-c2f8e8116734")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 204.0686 41.91 0)
+			(at 136.2914 52.07 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 				(hide yes)
 			)
 		)
@@ -3040,7 +3040,7 @@
 	)
 	(global_label "CANCEL"
 		(shape input)
-		(at 190.5 52.07 0)
+		(at 190.5 72.39 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -3050,7 +3050,7 @@
 		)
 		(uuid "c1728f2b-02d3-4608-bb93-833bbd33f677")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 200.6214 52.07 0)
+			(at 200.6214 72.39 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3062,29 +3062,29 @@
 	)
 	(global_label "Impact_IO"
 		(shape bidirectional)
-		(at 149.86 46.99 180)
+		(at 190.5 41.91 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify right)
+			(justify left)
 		)
 		(uuid "d6776d59-ac73-432a-a48b-e109ea0afeb4")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 136.4502 46.99 0)
+			(at 203.9098 41.91 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify right)
+				(justify left)
 				(hide yes)
 			)
 		)
 	)
 	(global_label "HEARTBEAT"
 		(shape output)
-		(at 190.5 64.77 0)
+		(at 190.5 62.23 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -3094,7 +3094,7 @@
 		)
 		(uuid "dc9d6733-2494-4b65-9a96-4108e663e605")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 203.7661 64.77 0)
+			(at 203.7661 62.23 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3106,7 +3106,7 @@
 	)
 	(global_label "STATUS"
 		(shape output)
-		(at 190.5 69.85 0)
+		(at 190.5 67.31 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -3116,7 +3116,7 @@
 		)
 		(uuid "eaeb4bf9-d27f-4ca1-9779-d857f83a76a0")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 200.2585 69.85 0)
+			(at 200.2585 67.31 0)
 			(effects
 				(font
 					(size 1.27 1.27)

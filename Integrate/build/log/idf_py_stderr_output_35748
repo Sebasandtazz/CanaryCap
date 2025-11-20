@@ -1,0 +1,9 @@
+Command: cmake -G Ninja -DPYTHON_DEPS_CHECKED=1 -DPYTHON=C:\Users\sebas\.espressif\python_env\idf5.5_py3.11_env\Scripts\python.exe -DESP_PLATFORM=1 -DCCACHE_ENABLE=1 C:\Users\sebas\Documents\Homework\Fall_2025\ECE_49022\CanaryCap\Integrate
+CMake Error at C:/Users/sebas/esp/v5.5.1/esp-idf/tools/cmake/project.cmake:472 (message):
+  Directory specified in EXTRA_COMPONENT_DIRS doesn't exist:
+  C:/Users/sebas/Documents/Homework/Fall_2025/ECE_49022/CanaryCap/esp-zigbee-sdk/components
+Call Stack (most recent call first):
+  C:/Users/sebas/esp/v5.5.1/esp-idf/tools/cmake/project.cmake:574 (__project_init)
+  CMakeLists.txt:13 (project)
+
+
