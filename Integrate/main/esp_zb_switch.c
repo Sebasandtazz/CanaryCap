@@ -53,6 +53,7 @@ static void zb_buttons_handler(switch_func_pair_t *button_func_pair)
     }
 }
 
+
 static esp_err_t deferred_driver_init(void)
 {
     static bool is_inited = false;
@@ -102,7 +103,7 @@ static void user_find_cb(esp_zb_zdp_status_t zdo_status, uint16_t addr, uint8_t 
     }
 }
 
-void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
+static void esp_zb_app_signal_handler_example(esp_zb_app_signal_t *signal_struct)
 {
     uint32_t *p_sg_p       = signal_struct->p_app_signal;
     esp_err_t err_status = signal_struct->esp_err_status;

@@ -21,8 +21,12 @@
 #include "ha/esp_zigbee_ha_standard.h"
 #include "esp_zb_switch.h"
 #include "zcl/esp_zigbee_zcl_basic.h"
+#include "led_strip.h"
 #include "zcl/esp_zigbee_zcl_command.h"
 #include "zb_alert.h"
+#include "zb_cluster_manager.h"
+#include "zb_mesh_network.h"
+#include "zb_canary_cluster.h"
 #include "driver/i2c_master.h"
 #include "driver/gpio.h"
 #include "math.h"
@@ -39,16 +43,29 @@
 #include "dirent.h"
 #include "stdlib.h"
 
+/*
+ * Build role selection:
+ * Uncomment the following line to compile this firmware as a Zigbee ROUTER.
+ * When commented out, the firmware builds as a COORDINATOR by default.
+ */
+#define ZB_BUILD_AS_ROUTER
+#define ZB_PERMIT_JOIN_DURATION 600
+/* Periodic reopen interval (seconds): how often coordinator re-opens network to allow joins */
+#define ZB_REOPEN_INTERVAL_SECONDS 300
+
 //Definitions for SPI and ADXL345
 static const char *TAGSPI = "ADXL345";
 
-#define I2C_MASTER_SCL_IO           9 // SCL on ESP32-C6 (GPIO1) - using bit-bang
+#define I2C_MASTER_SCL_IO           9 // SCL on ESP32-C6 (GPIO1) - using bit-bang (disabled when using boot button)
 #define I2C_MASTER_SDA_IO           8 // SDA on ESP32-C6 (GPIO0) - using bit-bang
 #define LED_GPIO1                   18 //CONFIG_LED_GPIO
 #define LED_GPIO2                   13 //CONFIG_LED_GPIO
+#define LED_ONBOARD_GPIO            8  // Onboard RGB LED for ESP32-C6-DevKit
 
-#define BUTTON_GPIO                 15 //CONFIG_BUTTON_GPIO
+#define BUTTON_GPIO                 9  // Boot button on ESP32-C6-DevKit
 #define BUZZER_GPIO                 17 //CONFIG_BUZZER_GPIO
+
+static led_strip_handle_t s_led_strip = NULL;
 
 #define I2C_MASTER_NUM              I2C_NUM_0
 #define I2C_MASTER_FREQ_HZ          100000  // Start with standard 100kHz I2C speed
@@ -71,6 +88,10 @@ static TimerHandle_t major_impact_timer;
 static bool major_impact_active = false;
 static volatile bool major_impact_cancelled_flag = false;
 static const char *TAG1 = "spiffs_list";
+
+/* Button press tracking for factory reset */
+static volatile uint32_t button_press_time = 0;
+static volatile bool button_pressed = false;
 static int impact_count = 0;
 
 //Def for Buzzer
@@ -239,15 +260,36 @@ void log_data_to_spiffs(float mag, float x_g, float y_g, float z_g)
 static void init_led(int gpio){
     gpio_config_t io_conf = {.pin_bit_mask=1ULL<<gpio,.mode=GPIO_MODE_OUTPUT,.pull_up_en=0,.pull_down_en=0,.intr_type=GPIO_INTR_DISABLE};
     gpio_config(&io_conf);
-    gpio_set_level(gpio,1);
+    gpio_set_level(gpio,1);  // Start OFF (active LOW)
+}
+
+static void init_onboard_led(void){
+    led_strip_config_t led_strip_conf = {
+        .max_leds = 1,
+        .strip_gpio_num = LED_ONBOARD_GPIO,
+    };
+    led_strip_rmt_config_t rmt_conf = {
+        .resolution_hz = 10 * 1000 * 1000, // 10MHz
+    };
+    ESP_ERROR_CHECK(led_strip_new_rmt_device(&led_strip_conf, &rmt_conf, &s_led_strip));
+    /* Turn off LED initially */
+    led_strip_set_pixel(s_led_strip, 0, 0, 0, 0);
+    led_strip_refresh(s_led_strip);
+}
+
+static void set_onboard_led(uint8_t r, uint8_t g, uint8_t b){
+    if (s_led_strip) {
+        led_strip_set_pixel(s_led_strip, 0, r, g, b);
+        led_strip_refresh(s_led_strip);
+    }
 }
 
 static void flash_led(int GPIO){
     for(int i=0;i<10;i++){
-        gpio_set_level(GPIO,0);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        gpio_set_level(GPIO,1);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        gpio_set_level(GPIO,0);  // ON (active LOW)
+        vTaskDelay(pdMS_TO_TICKS(100));
+        gpio_set_level(GPIO,1);  // OFF (active LOW)
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
@@ -304,25 +346,21 @@ static void stop_led_blink(void)
    We create a short one-shot FreeRTOS timer to stop the PWM after the
    requested duration so buzzer_beep_ms() is non-blocking.
 */
-//static const ledc_channel_t BUZZER_LEDC_CHANNEL = LEDC_CHANNEL_0;
-//static const ledc_timer_bit_t BUZZER_DUTY_RES = LEDC_TIMER_8_BIT;
-//static const ledc_timer_t BUZZER_LEDC_TIMER = LEDC_TIMER_0;
 
-/* Select LEDC speed mode; fall back to 0 if symbol not defined for this target */
+/* Select LEDC speed mode; fall back to low speed if symbol not defined for this target */
 #if defined(LEDC_HIGH_SPEED_MODE)
 #define BUZZER_LEDC_MODE LEDC_HIGH_SPEED_MODE
 #elif defined(LEDC_LOW_SPEED_MODE)
 #define BUZZER_LEDC_MODE LEDC_LOW_SPEED_MODE
 #else
-#define BUZZER_LEDC_MODE 0
+#define BUZZER_LEDC_MODE LEDC_LOW_SPEED_MODE
 #endif
-/*
+
 static void buzzer_stop_timer_cb(TimerHandle_t xTimer)
 {
-    
-    ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0);
-    ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL);
-    ledc_stop(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0);
+    ledc_set_duty(BUZZER_LEDC_MODE, LEDC_CHANNEL, 0);
+    ledc_update_duty(BUZZER_LEDC_MODE, LEDC_CHANNEL);
+    ledc_stop(BUZZER_LEDC_MODE, LEDC_CHANNEL, 0);
     xTimerDelete(xTimer, 0);
 }
 
@@ -330,40 +368,37 @@ static void buzzer_init(void)
 {
     ledc_timer_config_t ledc_timer = {
         .speed_mode       = BUZZER_LEDC_MODE,
-        .duty_resolution  = BUZZER_DUTY_RES,
-        .timer_num        = BUZZER_LEDC_TIMER,
-        .freq_hz          = 2000, // default, will be updated per beep
+        .duty_resolution  = LEDC_DUTY_RES,
+        .timer_num        = LEDC_TIMER,
+        .freq_hz          = LEDC_FREQUENCY,
         .clk_cfg          = LEDC_AUTO_CLK,
     };
-    ledc_timer_config(&ledc_timer);
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
     ledc_channel_config_t ledc_channel = {
-        .gpio_num       = BUZZER_GPIO,
         .speed_mode     = BUZZER_LEDC_MODE,
-        .channel        = BUZZER_LEDC_CHANNEL,
+        .channel        = LEDC_CHANNEL,
+        .timer_sel      = LEDC_TIMER,
         .intr_type      = LEDC_INTR_DISABLE,
-        .timer_sel      = BUZZER_LEDC_TIMER,
+        .gpio_num       = LEDC_OUTPUT_IO,
         .duty           = 0,
         .hpoint         = 0
     };
-    ledc_channel_config(&ledc_channel);
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
 }
 
 static void buzzer_beep_ms(uint32_t freq_hz, uint32_t duration_ms)
 {
-    
-    ledc_set_freq(BUZZER_LEDC_MODE, BUZZER_LEDC_TIMER, freq_hz);
-    uint32_t max_duty = (1 << BUZZER_DUTY_RES) - 1;
-    ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, max_duty / 2);
-    ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL);
+    ledc_set_freq(BUZZER_LEDC_MODE, LEDC_TIMER, freq_hz);
+    uint32_t max_duty = (1 << LEDC_DUTY_RES) - 1;
+    ledc_set_duty(BUZZER_LEDC_MODE, LEDC_CHANNEL, max_duty / 2);
+    ledc_update_duty(BUZZER_LEDC_MODE, LEDC_CHANNEL);
 
-    
     TimerHandle_t t = xTimerCreate("bstop", pdMS_TO_TICKS(duration_ms), pdFALSE, NULL, buzzer_stop_timer_cb);
     if (t) {
         xTimerStart(t, 0);
     }
 }
-*/
 
 static const char* infer_impact_type(float ax,float ay,float az,float mag){
     
@@ -406,6 +441,39 @@ static void classify_impact(float x_g, float y_g, float z_g){
     if(strcmp(impact_type, "none")!=0){
         ESP_LOGE(TAGSPI, "Impact detected! Type: %s, Magnitude: %.3f g", impact_type, mag);
     }
+
+    /* Determine severity and send via cluster manager */
+    canary_impact_severity_t severity = CANARY_IMPACT_NONE;
+    canary_impact_type_t cluster_type = CANARY_IMPACT_TYPE_UNKNOWN;
+    
+    if (mag > THRESH_SEVERE_G) {
+        severity = CANARY_IMPACT_SEVERE;
+    } else if (mag > THRESH_MODERATE_G) {
+        severity = CANARY_IMPACT_MAJOR;
+    } else {
+        severity = CANARY_IMPACT_MINOR;
+    }
+    
+    /* Map impact type string to cluster enum */
+    if (strcmp(impact_type, "Fall") == 0) cluster_type = CANARY_IMPACT_TYPE_FALL;
+    else if (strcmp(impact_type, "Ceiling Collapse") == 0) cluster_type = CANARY_IMPACT_TYPE_CEILING_COLLAPSE;
+    else if (strcmp(impact_type, "Hard Landing") == 0) cluster_type = CANARY_IMPACT_TYPE_HARD_LANDING;
+    else if (strcmp(impact_type, "Front Impact") == 0) cluster_type = CANARY_IMPACT_TYPE_FRONT;
+    else if (strcmp(impact_type, "Rear Impact") == 0) cluster_type = CANARY_IMPACT_TYPE_REAR;
+    else if (strcmp(impact_type, "Right Side Impact") == 0) cluster_type = CANARY_IMPACT_TYPE_RIGHT_SIDE;
+    else if (strcmp(impact_type, "Left Side Impact") == 0) cluster_type = CANARY_IMPACT_TYPE_LEFT_SIDE;
+    else if (strcmp(impact_type, "blunt") == 0) cluster_type = CANARY_IMPACT_TYPE_BLUNT;
+    
+    /* Send impact alert via cluster manager */
+    if (severity >= CANARY_IMPACT_MAJOR) {
+        zb_cluster_send_impact_alert(severity, cluster_type, mag, x_g, y_g, z_g);
+        
+        /* Local alerts for severe impacts */
+        if (severity == CANARY_IMPACT_SEVERE) {
+            start_led_blink(LED_GPIO2, 150, 150);
+            buzzer_beep_ms(3000, 3000);
+        }
+    }
    
     if(impact_count>=5 && mag>THRESH_MODERATE_G){
             ESP_LOGW(TAGSPI, "Multiple impacts detected (%d)! Go see a doctor!", impact_count);
@@ -423,14 +491,23 @@ fclose(
 }
 */
 static void IRAM_ATTR button_handler(void* arg){
-    /* ISR: avoid calling non-ISR safe APIs (like ESP_LOG) here.
-       Stop the timer from ISR and set a flag so the main task can log.
-    */
-    if (major_impact_active) {
+    /* ISR: Track button press/release for factory reset */
+    uint32_t level = gpio_get_level(BUTTON_GPIO);
+    
+    if (level == 0) {
+        /* Button pressed (active low) */
+        button_pressed = true;
+        button_press_time = xTaskGetTickCountFromISR();
+    } else {
+        /* Button released */
+        button_pressed = false;
+    }
+    
+    /* Legacy: Stop major impact timer if active */
+    if (major_impact_active && level == 0) {
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
         BaseType_t stopped = xTimerStopFromISR(major_impact_timer, &xHigherPriorityTaskWoken);
         if (stopped == pdPASS) {
-            /* Only mark cancelled if the timer was actually stopped */
             major_impact_active = false;
             major_impact_cancelled_flag = true;
         }
@@ -555,10 +632,14 @@ void log_adc_data_to_spiffs(adc_continuous_data_t *parsed_data, uint32_t num_sam
             uint32_t voltage_mv = raw_to_voltage(parsed_data[i].raw_data);
             if(voltage_mv >= 3300)
             {
-                /* notify Zigbee network (debounced) */
-                //send_zigbee_alert_toggle_debounced(5000);
+                /* Send gas alert via cluster manager */
+                zb_cluster_send_gas_alert(true, voltage_mv, parsed_data[i].raw_data);
+                
+                /* Local alert indicators */
+                start_led_blink(LED_GPIO2, 200, 200);
+                buzzer_beep_ms(2000, 3000);
 
-                fprintf(f, "ADC%d, Channel: %d, Value: %" PRIu32 "\n",
+                fprintf(f, "ADC%d, Channel: %d, Value: %" PRIu32 " (GAS ALERT)\n",
                     parsed_data[i].unit + 1,
                     parsed_data[i].channel,
                     parsed_data[i].raw_data);
@@ -638,164 +719,284 @@ void adc_task(void *param)
     }
 }
 
-//begin zigbee switch code
+// --- Zigbee mesh network callbacks ---
 
-static void zb_buttons_handler(switch_func_pair_t *button_func_pair)
+static void mesh_state_change_callback(zb_mesh_state_t old_state, zb_mesh_state_t new_state)
 {
-    if (button_func_pair->func == SWITCH_ONOFF_TOGGLE_CONTROL) {
-        /* implemented light switch toggle functionality */
-        esp_zb_zcl_on_off_cmd_t cmd_req;
-        cmd_req.zcl_basic_cmd.src_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
-        cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT;
-        cmd_req.on_off_cmd_id = ESP_ZB_ZCL_CMD_ON_OFF_TOGGLE_ID;
-        esp_zb_lock_acquire(portMAX_DELAY);
-        esp_zb_zcl_on_off_cmd_req(&cmd_req);
-        esp_zb_lock_release();
-        ESP_EARLY_LOGI(TAGZB, "Send 'on_off toggle' command");
+    ESP_LOGW(TAGZB, "*** MESH STATE CHANGED: %d -> %d ***", old_state, new_state);
+    
+    if (new_state == ZB_MESH_STATE_JOINED) {
+        /* Joined network - flash onboard LED and indicate success */
+        ESP_LOGW(TAGZB, "==> DEVICE CONNECTED TO NETWORK <==");
+        
+        /* Flash onboard LED rapidly to indicate connection (green) */
+        for (int i = 0; i < 5; i++) {
+            set_onboard_led(0, 50, 0);  // Green ON
+            vTaskDelay(pdMS_TO_TICKS(100));
+            set_onboard_led(0, 0, 0);  // OFF
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        
+        /* Keep onboard LED on while connected (solid green) */
+        set_onboard_led(0, 20, 0);
+        
+        /* Other indicators */
+        gpio_set_level(LED_GPIO2, 0);
+        buzzer_beep_ms(2000, 200);
+        vTaskDelay(pdMS_TO_TICKS(250));
+        gpio_set_level(LED_GPIO2, 1);
+        
+    } else if (old_state == ZB_MESH_STATE_JOINED && new_state == ZB_MESH_STATE_DISCONNECTED) {
+        /* Lost connection - turn off onboard LED and alert */
+        ESP_LOGE(TAGZB, "==> DEVICE DISCONNECTED FROM NETWORK <==");
+        
+        /* Turn onboard LED red */
+        set_onboard_led(20, 0, 0);
+        
+        /* Alert with blinking and beep */
+        start_led_blink(LED_GPIO2, 300, 300);
+        buzzer_beep_ms(2000, 500);
+        
+    } else if (new_state == ZB_MESH_STATE_FORMING) {
+        ESP_LOGI(TAGZB, "Forming network...");
+    } else if (new_state == ZB_MESH_STATE_JOINING) {
+        ESP_LOGI(TAGZB, "Joining network...");
     }
 }
 
-static esp_err_t deferred_driver_init(void)
+static void mesh_device_event_callback(bool joined, uint16_t device_addr)
 {
-    static bool is_inited = false;
-    if (!is_inited) {
-        ESP_RETURN_ON_FALSE(switch_driver_init(button_func_pair, PAIR_SIZE(button_func_pair), zb_buttons_handler),
-                            ESP_FAIL, TAGZB, "Failed to initialize switch driver");
-        is_inited = true;
-    }
-    return is_inited ? ESP_OK : ESP_FAIL;
-}
-
-static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
-{
-    ESP_RETURN_ON_FALSE(esp_zb_bdb_start_top_level_commissioning(mode_mask) == ESP_OK, , TAGZB, "Failed to start Zigbee bdb commissioning");
-}
-
-static void bind_cb(esp_zb_zdp_status_t zdo_status, void *user_ctx)
-{
-    if (zdo_status == ESP_ZB_ZDP_STATUS_SUCCESS) {
-        ESP_LOGI(TAGZB, "Bound successfully!");
-        if (user_ctx) {
-            light_bulb_device_params_t *light = (light_bulb_device_params_t *)user_ctx;
-            ESP_LOGI(TAGZB, "The light originating from address(0x%x) on endpoint(%d)", light->short_addr, light->endpoint);
-            free(light);
+    if (joined) {
+        ESP_LOGW(TAGZB, "*** NEW DEVICE JOINED NETWORK: 0x%04x ***", device_addr);
+        
+        /* Flash onboard LED to indicate new device (blue) */
+        for (int i = 0; i < 3; i++) {
+            set_onboard_led(0, 0, 50);  // Blue ON
+            vTaskDelay(pdMS_TO_TICKS(150));
+            set_onboard_led(0, 20, 0);  // Back to green
+            vTaskDelay(pdMS_TO_TICKS(150));
         }
-    }
-}
-
-static void user_find_cb(esp_zb_zdp_status_t zdo_status, uint16_t addr, uint8_t endpoint, void *user_ctx)
-{
-    if (zdo_status == ESP_ZB_ZDP_STATUS_SUCCESS) {
-        ESP_LOGI(TAGZB, "Found light");
-        esp_zb_zdo_bind_req_param_t bind_req;
-        light_bulb_device_params_t *light = (light_bulb_device_params_t *)malloc(sizeof(light_bulb_device_params_t));
-        light->endpoint = endpoint;
-        light->short_addr = addr;
-        esp_zb_ieee_address_by_short(light->short_addr, light->ieee_addr);
-        esp_zb_get_long_address(bind_req.src_address);
-        bind_req.src_endp = HA_ONOFF_SWITCH_ENDPOINT;
-        bind_req.cluster_id = ESP_ZB_ZCL_CLUSTER_ID_ON_OFF;
-        bind_req.dst_addr_mode = ESP_ZB_ZDO_BIND_DST_ADDR_MODE_64_BIT_EXTENDED;
-        memcpy(bind_req.dst_address_u.addr_long, light->ieee_addr, sizeof(esp_zb_ieee_addr_t));
-        bind_req.dst_endp = endpoint;
-        bind_req.req_dst_addr = esp_zb_get_short_address(); /* TODO: Send bind request to self */
-        ESP_LOGI(TAGZB, "Try to bind On/Off");
-        esp_zb_zdo_device_bind_req(&bind_req, bind_cb, (void *)light);
+        
+        /* Quick beep */
+        buzzer_beep_ms(2500, 150);
+        
+    } else {
+        ESP_LOGE(TAGZB, "*** DEVICE LEFT NETWORK: 0x%04x ***", device_addr);
+        
+        /* Flash onboard LED slowly to indicate device left (red) */
+        for (int i = 0; i < 2; i++) {
+            set_onboard_led(30, 0, 0);  // Red ON
+            vTaskDelay(pdMS_TO_TICKS(300));
+            set_onboard_led(0, 20, 0);  // Back to green
+            vTaskDelay(pdMS_TO_TICKS(300));
+        }
+        
+        /* Warning beep */
+        buzzer_beep_ms(1500, 300);
     }
 }
 
-void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
+static void network_status_received_callback(const canary_network_status_msg_t *msg, uint16_t src_addr)
 {
-    uint32_t *p_sg_p       = signal_struct->p_app_signal;
-    esp_err_t err_status = signal_struct->esp_err_status;
-    esp_zb_app_signal_type_t sig_type = *p_sg_p;
-    esp_zb_zdo_signal_device_annce_params_t *dev_annce_params = NULL;
-    switch (sig_type) {
-    case ESP_ZB_ZDO_SIGNAL_SKIP_STARTUP:
-        ESP_LOGI(TAGZB, "Initialize Zigbee stack");
-        esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_INITIALIZATION);
-        break;
-    case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START:
-    case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT:
-        if (err_status == ESP_OK) {
-            ESP_LOGI(TAGZB, "Deferred driver initialization %s", deferred_driver_init() ? "failed" : "successful");
-            ESP_LOGI(TAGZB, "Device started up in%s factory-reset mode", esp_zb_bdb_is_factory_new() ? "" : " non");
-            if (esp_zb_bdb_is_factory_new()) {
-                ESP_LOGI(TAGZB, "Start network formation");
-                esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_FORMATION);
-            } else {
-                esp_zb_bdb_open_network(180);
-                ESP_LOGI(TAGZB, "Device rebooted");
-            }
-        } else {
-            ESP_LOGW(TAGZB, "%s failed with status: %s, retrying", esp_zb_zdo_signal_to_string(sig_type),
-                     esp_err_to_name(err_status));
-            esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb,
-                                   ESP_ZB_BDB_MODE_INITIALIZATION, 1000);
-        }
-        break;
-    case ESP_ZB_BDB_SIGNAL_FORMATION:
-        if (err_status == ESP_OK) {
-            esp_zb_ieee_addr_t extended_pan_id;
-            esp_zb_get_extended_pan_id(extended_pan_id);
-            ESP_LOGI(TAGZB, "Formed network successfully (Extended PAN ID: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x, PAN ID: 0x%04hx, Channel:%d, Short Address: 0x%04hx)",
-                     extended_pan_id[7], extended_pan_id[6], extended_pan_id[5], extended_pan_id[4],
-                     extended_pan_id[3], extended_pan_id[2], extended_pan_id[1], extended_pan_id[0],
-                     esp_zb_get_pan_id(), esp_zb_get_current_channel(), esp_zb_get_short_address());
-            esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
-        } else {
-            ESP_LOGI(TAGZB, "Restart network formation (status: %s)", esp_err_to_name(err_status));
-            esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb, ESP_ZB_BDB_MODE_NETWORK_FORMATION, 1000);
-        }
-        break;
-    case ESP_ZB_BDB_SIGNAL_STEERING:
-        if (err_status == ESP_OK) {
-            ESP_LOGI(TAGZB, "Network steering started");
-        }
-        break;
-    case ESP_ZB_ZDO_SIGNAL_DEVICE_ANNCE:
-        dev_annce_params = (esp_zb_zdo_signal_device_annce_params_t *)esp_zb_app_signal_get_params(p_sg_p);
-        ESP_LOGI(TAGZB, "New device commissioned or rejoined (short: 0x%04hx)", dev_annce_params->device_short_addr);
-        esp_zb_zdo_match_desc_req_param_t  cmd_req;
-        cmd_req.dst_nwk_addr = dev_annce_params->device_short_addr;
-        cmd_req.addr_of_interest = dev_annce_params->device_short_addr;
-        esp_zb_zdo_find_on_off_light(&cmd_req, user_find_cb, NULL);
-        break;
-    case ESP_ZB_NWK_SIGNAL_PERMIT_JOIN_STATUS:
-        if (err_status == ESP_OK) {
-            if (*(uint8_t *)esp_zb_app_signal_get_params(p_sg_p)) {
-                ESP_LOGI(TAGZB, "Network(0x%04hx) is open for %d seconds", esp_zb_get_pan_id(), *(uint8_t *)esp_zb_app_signal_get_params(p_sg_p));
-            } else {
-                ESP_LOGW(TAGZB, "Network(0x%04hx) closed, devices joining not allowed.", esp_zb_get_pan_id());
-            }
-        }
-        break;
-    default:
-        ESP_LOGI(TAGZB, "ZDO signal: %s (0x%x), status: %s", esp_zb_zdo_signal_to_string(sig_type), sig_type,
-                 esp_err_to_name(err_status));
-        break;
+    if (msg->state == CANARY_NETWORK_CONNECTED) {
+        ESP_LOGW(TAGZB, "*** REMOTE DEVICE CONNECTED: 0x%04x (PAN:0x%02x%02x CH:%d) ***",
+                 src_addr, msg->pan_id_high, msg->pan_id_low, msg->channel);
+    } else if (msg->state == CANARY_NETWORK_DISCONNECTED) {
+        ESP_LOGE(TAGZB, "*** REMOTE DEVICE DISCONNECTED: 0x%04x ***", src_addr);
+        
+        /* Visual alert for remote disconnect */
+        gpio_set_level(LED_GPIO1, 0);
+        buzzer_beep_ms(1500, 200);
+        vTaskDelay(pdMS_TO_TICKS(250));
+        gpio_set_level(LED_GPIO1, 1);
+    } else {
+        ESP_LOGI(TAGZB, "Network status from 0x%04x: %s",
+                 src_addr, zb_cluster_network_state_to_string(msg->state));
+    }
+}
+
+static void impact_alert_received_callback(const canary_impact_alert_msg_t *msg, uint16_t src_addr)
+{
+    float magnitude = msg->magnitude / 1000.0f;
+    ESP_LOGW(TAGZB, "IMPACT ALERT from 0x%04x: %s (severity=%s, mag=%.2fg)",
+             src_addr,
+             zb_cluster_impact_type_to_string(msg->type),
+             zb_cluster_impact_severity_to_string(msg->severity),
+             magnitude);
+    
+    /* Visual/audio alert for remote impacts */
+    if (msg->severity >= CANARY_IMPACT_MAJOR) {
+        gpio_set_level(LED_GPIO1, 0); // Turn on LED
+        buzzer_beep_ms(3000, 1000);
+    }
+}
+
+static void gas_alert_received_callback(const canary_gas_alert_msg_t *msg, uint16_t src_addr)
+{
+    ESP_LOGW(TAGZB, "GAS ALERT from 0x%04x: detected=%d voltage=%dmV",
+             src_addr, msg->detected, msg->voltage_mv);
+    
+    /* Visual/audio alert for remote gas detection */
+    if (msg->detected) {
+        gpio_set_level(LED_GPIO2, 0); // Turn on LED
+        buzzer_beep_ms(2500, 1500);
     }
 }
 
 static void esp_zb_task(void *pvParameters)
 {
-    /* Initialize Zigbee stack */
-    esp_zb_cfg_t zb_nwk_cfg = ESP_ZB_ZC_CONFIG();
+    /* Determine role based on build flag */
+#ifdef ZB_BUILD_AS_ROUTER
+    zb_mesh_role_t role = ZB_MESH_ROLE_ROUTER;
+#else
+    zb_mesh_role_t role = ZB_MESH_ROLE_COORDINATOR;
+#endif
+
+    /* Initialize mesh network */
+    ESP_ERROR_CHECK(zb_mesh_init(role));
+    
+    /* Initialize cluster manager */
+    ESP_ERROR_CHECK(zb_cluster_manager_init(role == ZB_MESH_ROLE_COORDINATOR));
+    
+    /* Register callbacks */
+    zb_mesh_register_state_callback(mesh_state_change_callback);
+    zb_mesh_register_device_callback(mesh_device_event_callback);
+    zb_cluster_register_network_status_callback(network_status_received_callback);
+    zb_cluster_register_impact_alert_callback(impact_alert_received_callback);
+    zb_cluster_register_gas_alert_callback(gas_alert_received_callback);
+
+    /* Configure Zigbee stack */
+    esp_zb_cfg_t zb_nwk_cfg = {
+        .esp_zb_role = (role == ZB_MESH_ROLE_COORDINATOR) ? 
+                       ESP_ZB_DEVICE_TYPE_COORDINATOR : ESP_ZB_DEVICE_TYPE_ROUTER,
+        .install_code_policy = false,
+        .nwk_cfg.zczr_cfg = {
+            .max_children = ZB_MESH_MAX_CHILDREN,
+        },
+    };
+
+    ESP_LOGI(TAGZB, "Starting Zigbee mesh, role=%s", 
+             (role == ZB_MESH_ROLE_COORDINATOR) ? "COORDINATOR" : "ROUTER");
+    
     esp_zb_init(&zb_nwk_cfg);
 
-    /* Create On/Off switch endpoint (Basic cluster is included automatically) */
+    /* Create endpoint with on/off switch cluster for compatibility */
     esp_zb_on_off_switch_cfg_t switch_cfg = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
-    esp_zb_ep_list_t *switch_ep = esp_zb_on_off_switch_ep_create(HA_ONOFF_SWITCH_ENDPOINT, &switch_cfg);
-
-    /* Register endpoint and start Zigbee network */
-    esp_zb_device_register(switch_ep);
-    esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
+    esp_zb_ep_list_t *ep_list = esp_zb_on_off_switch_ep_create(HA_ONOFF_SWITCH_ENDPOINT, &switch_cfg);
+    
+    /* TODO: Add custom clusters to endpoint here if needed for attribute reporting */
+    
+    esp_zb_device_register(ep_list);
+    esp_zb_set_primary_network_channel_set(ZB_MESH_PRIMARY_CHANNEL_MASK);
+    
+    /* Start Zigbee stack */
     ESP_ERROR_CHECK(esp_zb_start(false));
-
-    ESP_LOGI("HA_SWITCH", "Zigbee HA Switch running");
-
-    /* Main loop */
+    
+    /* Run main Zigbee stack loop - this handles all events */
     esp_zb_stack_main_loop();
+
+}
+
+/* Zigbee app signal handler - delegates to mesh network handler */
+void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
+{
+    /* Forward all signals to mesh network handler */
+    zb_mesh_handle_signal(signal_struct);
+}
+
+/* Heartbeat task to show connection status */
+static void button_monitor_task(void *pvParameters)
+{
+    const TickType_t hold_time_ticks = pdMS_TO_TICKS(3000);  // 3 seconds
+    bool factory_reset_triggered = false;
+    uint32_t last_debug_tick = 0;
+    
+    ESP_LOGI(TAGZB, "Button monitor task started - GPIO %d", BUTTON_GPIO);
+    
+    while (1) {
+        /* Debug: Print button state every 2 seconds */
+        uint32_t now = xTaskGetTickCount();
+        if ((now - last_debug_tick) >= pdMS_TO_TICKS(2000)) {
+            uint32_t level = gpio_get_level(BUTTON_GPIO);
+            ESP_LOGI(TAGZB, "[DEBUG] Button GPIO %d level: %lu, pressed: %d", BUTTON_GPIO, level, button_pressed);
+            last_debug_tick = now;
+        }
+        
+        if (button_pressed && !factory_reset_triggered) {
+            uint32_t hold_duration = xTaskGetTickCount() - button_press_time;
+            
+            ESP_LOGI(TAGZB, "Button held for %lu ms", (hold_duration * 1000) / configTICK_RATE_HZ);
+            
+            if (hold_duration >= hold_time_ticks) {
+                /* Button held for 3 seconds - trigger factory reset */
+                factory_reset_triggered = true;
+                
+                ESP_LOGW(TAGZB, "=== FACTORY RESET TRIGGERED ===");
+                ESP_LOGW(TAGZB, "Button held for 3 seconds - erasing Zigbee network config...");
+                
+                /* Flash LED red rapidly to indicate factory reset */
+                for (int i = 0; i < 10; i++) {
+                    set_onboard_led(50, 0, 0);  // Red
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                    set_onboard_led(0, 0, 0);   // Off
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                }
+                
+                /* Perform factory reset */
+                zb_mesh_factory_reset();
+                
+                ESP_LOGW(TAGZB, "Factory reset complete! Device will restart...");
+                set_onboard_led(50, 0, 0);  // Solid red before restart
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                
+                /* Restart ESP */
+                esp_restart();
+            }
+        } else if (!button_pressed) {
+            /* Reset flag when button is released */
+            factory_reset_triggered = false;
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(100));  // Check every 100ms
+    }
+}
+
+static void heartbeat_task(void *pvParameters)
+{
+    int pulse_count = 0;
+    while (1) {
+        bool is_joined = zb_mesh_is_joined();
+        uint16_t short_addr = esp_zb_get_short_address();
+        
+        if (is_joined && short_addr != 0xFFFF) {
+            /* Connected - pulse onboard LED every 2 seconds */
+            ESP_LOGI(TAGZB, "[HEARTBEAT] Connected to network - Short Addr: 0x%04x", short_addr);
+            
+            /* Quick pulse to show we're alive */
+            set_onboard_led(0, 50, 0);  // Bright green
+            vTaskDelay(pdMS_TO_TICKS(100));
+            set_onboard_led(0, 20, 0);  // Dim green
+            
+            pulse_count++;
+            if (pulse_count % 5 == 0) {  // Every 10 seconds
+                ESP_LOGW(TAGZB, "========== NETWORK STATUS: CONNECTED (0x%04x) ==========", short_addr);
+            }
+        } else {
+            /* Not connected - show searching pattern */
+            ESP_LOGW(TAGZB, "[HEARTBEAT] Not connected - Short Addr: 0x%04x (searching...)", short_addr);
+            
+            /* Slow blink to show searching (yellow) */
+            set_onboard_led(30, 15, 0);  // Yellow ON
+            vTaskDelay(pdMS_TO_TICKS(200));
+            set_onboard_led(0, 0, 0);  // OFF
+            vTaskDelay(pdMS_TO_TICKS(800));
+            
+            pulse_count = 0;
+            continue;  // Skip the normal delay
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(2000));  // 2 second heartbeat
+    }
 }
 
 
@@ -850,12 +1051,12 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(retzb);
 
-    uint8_t data[6];
-    uint8_t devid = 0;
-    i2c_master_bus_handle_t bus_handle;
-    i2c_master_dev_handle_t dev_handle;
+    // uint8_t data[6];
+    // uint8_t devid = 0;
+    // i2c_master_bus_handle_t bus_handle;
+    // i2c_master_dev_handle_t dev_handle;
 
-    //  // Initialize I2C and attach ADXL345
+    // // Initialize I2C and attach ADXL345
     // i2c_master_init(&bus_handle, &dev_handle);
     // ESP_LOGI(TAGSPI, "I2C initialized successfully");
 
@@ -865,11 +1066,10 @@ void app_main(void)
     //     ESP_LOGI(TAGSPI, "ADXL345 DEVID = 0x%02X", devid);
     //     if (devid != ADXL345_DEVID_EXPECTED) {
     //         ESP_LOGE(TAGSPI, "ADXL345 not detected! Expected 0xE5.");
-    //         return;
+    //         // continue without accelerometer
     //     }
     // } else {
     //     ESP_LOGE(TAGSPI, "Failed to communicate with ADXL345 at 0x%02X", ADXL345_ADDR);
-    //     return;
     // }
 
     // // Enable measurement mode
@@ -877,45 +1077,69 @@ void app_main(void)
 
     // // Set data format: Full resolution, ±2g range (0x08)
     // ESP_ERROR_CHECK(adxl345_register_write_byte(dev_handle, ADXL345_DATA_FORMAT_REG, 0x08));
-    // init_led(LED_GPIO1);
-    // init_led(LED_GPIO2);
-    // //buzzer_init();
 
-    // // Configure button input
-    // gpio_config_t io_conf = {
-    //     .pin_bit_mask = 1ULL << BUTTON_GPIO,
-    //     .mode = GPIO_MODE_INPUT,
-    //     .pull_up_en = 1,   // enable pull-up
-    //     .pull_down_en = 0,
-    //     .intr_type = GPIO_INTR_NEGEDGE, // falling edge
-    // };
-    // gpio_config(&io_conf);
+    init_led(LED_GPIO1);
+    init_led(LED_GPIO2);
+    init_onboard_led();  // Initialize onboard RGB LED for ESP32-C6
+    buzzer_init();
+    
+    ESP_LOGI(TAGZB, "Onboard RGB LED initialized on GPIO %d", LED_ONBOARD_GPIO);
 
-    // // Install ISR
-    // gpio_install_isr_service(0);
-    // gpio_isr_handler_add(BUTTON_GPIO, button_handler, NULL);
+    // Configure button input
+    gpio_config_t io_conf = {
+        .pin_bit_mask = 1ULL << BUTTON_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = 1,   // enable pull-up
+        .pull_down_en = 0,
+        .intr_type = GPIO_INTR_ANYEDGE, // both edges for press/release detection
+    };
+    gpio_config(&io_conf);
+
+    // Install ISR
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(BUTTON_GPIO, button_handler, NULL);
 
     // // Create major impact timer (10 sec)
     // major_impact_timer = xTimerCreate("MajorImpactTimer", pdMS_TO_TICKS(10000), pdFALSE, NULL, major_impact_timer_callback);
 
     // xTaskCreate(i2c_task, "i2c_task", 4096, dev_handle, 5, NULL);
 
-    adc_continuous_handle_t handle = NULL;
-    continuous_adc_init(channel, sizeof(channel) / sizeof(adc_channel_t), &handle);
+    /* ADC and I2C tasks commented out for testing without sensors */
+    // adc_continuous_handle_t handle = NULL;
+    // continuous_adc_init(channel, sizeof(channel) / sizeof(adc_channel_t), &handle);
 
-    /* Create the ADC task and store its handle before registering callbacks
-       or starting the ADC. This prevents the ADC ISR from attempting to
-       notify a NULL task handle if conversions occur immediately. */
-    xTaskCreate(adc_task, "adc_task", 4096, handle, 5, &adc_task_handle);
-    s_task_handle = adc_task_handle;
+    // /* Create the ADC task and store its handle before registering callbacks
+    //    or starting the ADC. This prevents the ADC ISR from attempting to
+    //    notify a NULL task handle if conversions occur immediately. */
+    // xTaskCreate(adc_task, "adc_task", 4096, handle, 5, &adc_task_handle);
+    // s_task_handle = adc_task_handle;
 
-    adc_continuous_evt_cbs_t cbs = {
-        .on_conv_done = s_conv_done_cb,
-    };
-    ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(handle, &cbs, NULL));
-    ESP_ERROR_CHECK(adc_continuous_start(handle));
+    // adc_continuous_evt_cbs_t cbs = {
+    //     .on_conv_done = s_conv_done_cb,
+    // };
+    // ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(handle, &cbs, NULL));
+    // ESP_ERROR_CHECK(adc_continuous_start(handle));
+    
+    ESP_LOGI(TAGZB, "ADC and I2C tasks disabled for DevKit testing");
+
+    /* Configure Zigbee platform (radio/host) before starting the Zigbee task */
+    {
+        esp_zb_platform_config_t zb_config = {
+            .radio_config = ESP_ZB_DEFAULT_RADIO_CONFIG(),
+            .host_config = ESP_ZB_DEFAULT_HOST_CONFIG(),
+        };
+        ESP_ERROR_CHECK(esp_zb_platform_config(&zb_config));
+    }
 
     xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
+    
+    /* Start heartbeat task to show connection status */
+    xTaskCreate(heartbeat_task, "heartbeat", 2048, NULL, 3, NULL);
+    ESP_LOGI(TAGZB, "Heartbeat task started - will show connection status every 2 seconds");
+    
+    /* Start button monitor task for factory reset */
+    xTaskCreate(button_monitor_task, "button_monitor", 2048, NULL, 3, NULL);
+    ESP_LOGI(TAGZB, "Button monitor started - hold boot button for 3 seconds to factory reset");
 
     // FILE *log_file = fopen("/spiffs/adc_log.txt", "a");
     // if (log_file == NULL) {

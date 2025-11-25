@@ -1,6 +1,6 @@
 {
   "C_Cpp.intelliSenseEngine": "default",
-  "idf.port": "/dev/cu.usbserial-110",
+  "idf.port": "/dev/tty.debug-console",
   "idf.flashType": "UART",
   "files.associations": {
     "sdkconfig.h": "c",
@@ -14,5 +14,6 @@
   ],
   "idf.espIdfPathWin": "C:\\Users\\sebas\\esp\\v5.5.1\\esp-idf",
   "idf.toolsPathWin": "C:\\Users\\sebas\\.espressif",
-  "idf.pythonInstallPath": "/Users/justinbetz/anaconda3/bin/python3"
+  "idf.pythonInstallPath": "/Users/justinbetz/anaconda3/bin/python3",
+  "git.ignoreLimitWarning": true
 }
