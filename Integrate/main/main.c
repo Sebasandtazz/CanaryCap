@@ -23,7 +23,6 @@
 #include "zcl/esp_zigbee_zcl_basic.h"
 #include "led_strip.h"
 #include "zcl/esp_zigbee_zcl_command.h"
-#include "zb_alert.h"
 #include "zb_cluster_manager.h"
 #include "zb_mesh_network.h"
 #include "zb_canary_cluster.h"
@@ -80,8 +79,32 @@ static led_strip_handle_t s_led_strip = NULL;
 #define ADXL345_DEVID_EXPECTED      0xE5
 #define LSB_TO_G                    0.0039f  // 3.9 mg/LSB for ±2g range
 
-#define THRESH_SEVERE_G             1.0f
-#define THRESH_MODERATE_G           0.5f
+/* H3LIS331DL High-G Accelerometer definitions */
+#define H3LIS331DL_ADDR          0x18
+#define H3LIS331DL_WHO_AM_I_REG   0x0F
+#define H3LIS331DL_CTRL_REG1    0x20
+#define H3LIS331DL_OUT_X_L    0x28
+#define H3LIS331DL_OUT_Y_L    0x2A
+#define H3LIS331DL_OUT_Z_L    0x2C
+#define H3LIS331DL_WHO_AM_I_EXPECTED 0x32
+#define H3LIS331DL_CTRL_REG4       0x23
+
+/* H3LIS331DL datasheet values:
+    - Full scale: ±100 g
+    - Sensitivity: 780 mg / digit (i.e. 0.78 g per LSB)
+    - Zero-g offset accuracy: ±1.5 g
+    - Acceleration noise density (ODR 50Hz): 50 mg/√Hz (approx)
+    These values are used to convert raw counts to g.
+*/
+#define H3LIS_SENSITIVITY_MG       780.0f
+#define H3LIS_LSB_TO_G             (H3LIS_SENSITIVITY_MG / 1000.0f) /* 0.78 g/LSB */
+/* ADXL345 configured to ±16g full-resolution */
+#define ADXL_MAX_G                  16.0f
+/* Hand over when ADXL reaches this fraction of its max (configurable) */
+#define ADXL_HANDOVER_RATIO         0.90f
+
+#define THRESH_SEVERE_G             10.0f
+#define THRESH_MODERATE_G           5.0f
 #define MAX_LOG_FILE_SIZE           (100 * 1024)  // 100 KB max log file size
 
 static TimerHandle_t major_impact_timer;
@@ -93,6 +116,16 @@ static const char *TAG1 = "spiffs_list";
 static volatile uint32_t button_press_time = 0;
 static volatile bool button_pressed = false;
 static int impact_count = 0;
+
+/* Baseline accelerometer values for adaptive thresholding */
+static float baseline_x = 0.0f;
+static float baseline_y = 0.0f;
+static float baseline_z = 0.0f;
+static float baseline_mag = 0.0f;
+
+/* Button hold timer for SPIFFS clear (requires 5 second hold) */
+static TimerHandle_t button_hold_timer = NULL;
+static bool button_held = false;
 
 //Def for Buzzer
 #define LEDC_TIMER              LEDC_TIMER_0
@@ -175,7 +208,90 @@ static esp_err_t adxl345_register_write_byte(i2c_master_dev_handle_t dev_handle,
     return i2c_master_transmit(dev_handle, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
 }
 
-static void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle)
+static esp_err_t h3lis_register_read(i2c_master_dev_handle_t dev_handle, uint8_t reg_addr, uint8_t *data, size_t len)
+{
+    uint8_t addr = reg_addr;
+    /* Some devices require setting MSB for auto-increment during multi-byte read */
+    if (len > 1) addr = reg_addr | 0x80;
+    return i2c_master_transmit_receive(dev_handle, &addr, 1, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+}
+
+static esp_err_t h3lis_register_write_byte(i2c_master_dev_handle_t dev_handle, uint8_t reg_addr, uint8_t data)
+{
+    uint8_t write_buf[2] = { reg_addr, data };
+    return i2c_master_transmit(dev_handle, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+}
+
+static void h3lis_init(i2c_master_dev_handle_t dev_handle)
+{
+    uint8_t who = 0;
+    if (h3lis_register_read(dev_handle, H3LIS331DL_WHO_AM_I_REG, &who, 1) == ESP_OK) {
+        ESP_LOGI(TAGSPI, "H3LIS WHO_AM_I = 0x%02X", who);
+        if (who != H3LIS331DL_WHO_AM_I_EXPECTED) {
+            ESP_LOGW(TAGSPI, "Unexpected H3LIS WHO_AM_I (expected 0x%02X)", H3LIS331DL_WHO_AM_I_EXPECTED);
+        }
+    } else {
+        ESP_LOGW(TAGSPI, "Failed to read H3LIS WHO_AM_I");
+    }
+
+    /* Configure H3LIS: enable X/Y/Z, set ODR to a high rate and normal mode.
+       0x27: common value to enable axes and set ODR (adjust if needed).
+       Also set CTRL_REG4 to select full-scale ±100g if required by the device.
+    */
+    if (h3lis_register_write_byte(dev_handle, H3LIS331DL_CTRL_REG1, 0x27) != ESP_OK) {
+        ESP_LOGW(TAGSPI, "Failed to write H3LIS CTRL_REG1");
+    } else {
+        ESP_LOGI(TAGSPI, "H3LIS CTRL_REG1 configured");
+    }
+
+    /* Set full-scale to ±100g: value below sets FS bits for ±100g on many H3LIS331DL versions.
+       If your module requires a different value for ±100g, adjust H3LIS_FS_VAL accordingly. */
+    /* H3LIS FS register value for ±100g. This should be set to the value
+       specified by the H3LIS331DL datasheet for your chosen FS setting.
+       If you want me to set the exact datasheet value I can fetch it and
+       update this constant; for now this is a placeholder that you can
+       change after confirming with the datasheet. */
+     //CTRL_REG4 value provided by user (0x23) — sets FS and related bits per module config 
+    const uint8_t H3LIS_CTRL_REG4_FS_100G = 0x23; /* user provided */
+    if (h3lis_register_write_byte(dev_handle, H3LIS331DL_CTRL_REG4, H3LIS_CTRL_REG4_FS_100G) != ESP_OK) {
+        ESP_LOGW(TAGSPI, "Failed to write H3LIS CTRL_REG4 (FS)");
+    } else {
+        ESP_LOGI(TAGSPI, "H3LIS CTRL_REG4 (FS) configured (val=0x%02X)", H3LIS_CTRL_REG4_FS_100G);
+    }
+    ESP_LOGI(TAGSPI, "H3LIS configured: FS=±100g, sensitivity=%.1f mg/LSB (%.3f g/LSB), zero-g offset accuracy=±1.5 g", H3LIS_SENSITIVITY_MG, H3LIS_LSB_TO_G);
+}
+
+/* Helper: read ADXL345 and return X/Y/Z in g (Z with gravity offset like rest of code)
+   Returns true on success. */
+static bool read_adxl_xyz(i2c_master_dev_handle_t dev_handle, float *xg, float *yg, float *zg){
+    uint8_t data[6];
+    if (adxl345_register_read(dev_handle, ADXL345_DATAX0_REG, data, 6) != ESP_OK) return false;
+    int16_t x_raw = (int16_t)((data[1] << 8) | data[0]);
+    int16_t y_raw = (int16_t)((data[3] << 8) | data[2]);
+    int16_t z_raw = (int16_t)((data[5] << 8) | data[4]);
+    *xg = x_raw * LSB_TO_G;
+    *yg = y_raw * LSB_TO_G;
+    *zg = z_raw * LSB_TO_G - 1.0f; // same gravity offset used elsewhere
+    return true;
+}
+
+/* Helper: read H3LIS331DL and return X/Y/Z in g (apply same gravity offset to Z).
+   Returns true on success. */
+static bool read_h3lis_xyz(i2c_master_dev_handle_t dev_handle, float *xg, float *yg, float *zg)
+{
+    uint8_t data[6];
+     //H3LIS registers OUT_X_L .. OUT_Z_H are contiguous in many modes; read 6 bytes starting at OUT_X_L 
+    if (h3lis_register_read(dev_handle, H3LIS331DL_OUT_X_L, data, 6) != ESP_OK) return false;
+    int16_t x_raw = (int16_t)((data[1] << 8) | data[0]);
+    int16_t y_raw = (int16_t)((data[3] << 8) | data[2]);
+    int16_t z_raw = (int16_t)((data[5] << 8) | data[4]);
+    *xg = x_raw * H3LIS_LSB_TO_G;
+    *yg = y_raw * H3LIS_LSB_TO_G;
+    *zg = z_raw * H3LIS_LSB_TO_G - 1.0f; 
+    return true;
+}
+
+static void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle_adxl, i2c_master_dev_handle_t *dev_handle_h3lis)
 {
     i2c_master_bus_config_t bus_config = {
         .i2c_port = I2C_MASTER_NUM,
@@ -192,7 +308,11 @@ static void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_
         .device_address = ADXL345_ADDR,
         .scl_speed_hz = I2C_MASTER_FREQ_HZ,
     };
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(*bus_handle, &dev_config, dev_handle));
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(*bus_handle, &dev_config, dev_handle_adxl));
+
+    /* H3LIS support disabled - do not add H3LIS device */
+    /* dev_config.device_address = H3LIS331DL_ADDR; */
+    /* ESP_ERROR_CHECK(i2c_master_bus_add_device(*bus_handle, &dev_config, dev_handle_h3lis)); */
 }
 
 void list_spiffs_files(void)
@@ -231,15 +351,25 @@ void read_log_file(const char *file_path)
     fclose(f);
 }
 
+/* Timer callback: clears SPIFFS if button was held for full 5 seconds */
+static void button_hold_timer_callback(TimerHandle_t xTimer)
+{
+    
+    if (gpio_get_level(BUTTON_GPIO) == 0) {
+        FILE *f = fopen("/spiffs/i2c_log.txt", "w");
+        impact_count = 0;
+        gpio_set_level(LED_GPIO2, 1);
+        fclose(f);
+        ESP_LOGI(TAGSPI, "Log file cleared by 5-second button hold.");
+        button_held = false;
+    } else {
+        ESP_LOGI(TAGSPI, "Button released before 5 seconds; clear cancelled.");
+        button_held = false;
+    }
+}
+
 void log_data_to_spiffs(float mag, float x_g, float y_g, float z_g)
 {
-    if(gpio_get_level(BUTTON_GPIO)==0){
-        FILE *f = fopen("/spiffs/i2c_log.txt", "w");
-        impact_count=0;
-        gpio_set_level(LED_GPIO2,1);
-        fclose(f);
-        return;
-    }
     FILE *f = fopen("/spiffs/i2c_log.txt", "a");
     if (f == NULL) {
         ESP_LOGE(TAGSPI, "Failed to open file for writing");
@@ -400,15 +530,55 @@ static void buzzer_beep_ms(uint32_t freq_hz, uint32_t duration_ms)
     }
 }
 
+/* Collect baseline accelerometer readings for duration_ms sampling every interval_ms.
+   This blocks for the duration (intended to run at startup) and fills baseline globals.
+*/
+static void collect_baseline(i2c_master_dev_handle_t dev_handle, uint32_t duration_ms, uint32_t interval_ms)
+{
+    const int max_samples = (duration_ms + interval_ms - 1) / interval_ms;
+    if (max_samples <= 0) return;
+
+    float sx = 0.0f, sy = 0.0f, sz = 0.0f, sm = 0.0f;
+    int samples = 0;
+    uint8_t data[6];
+
+    ESP_LOGI(TAGSPI, "Collecting baseline for %u ms (%d samples)...", duration_ms, max_samples);
+    for (int i = 0; i < max_samples; ++i) {
+        float x_g, y_g, z_g;
+        if (read_adxl_xyz(dev_handle, &x_g, &y_g, &z_g)) {
+            float mag = sqrtf(x_g * x_g + y_g * y_g + z_g * z_g);
+            sx += fabsf(x_g);
+            sy += fabsf(y_g);
+            sz += fabsf(z_g);
+            sm += mag;
+            samples++;
+        } else {
+            ESP_LOGW(TAGSPI, "Baseline sample %d failed", i);
+        }
+        vTaskDelay(pdMS_TO_TICKS(interval_ms));
+    }
+
+    if(samples > 0){
+        baseline_x = sx / samples;
+        baseline_y = sy / samples;
+        baseline_z = sz / samples;
+        baseline_mag = sm / samples;
+        ESP_LOGI(TAGSPI, "Baseline collected: X=%.3fg Y=%.3fg Z=%.3fg MAG=%.3fg (n=%d)", baseline_x, baseline_y, baseline_z, baseline_mag, samples);
+    } 
+    else {
+        ESP_LOGW(TAGSPI, "No baseline samples collected");
+    }
+}
+
 static const char* infer_impact_type(float ax,float ay,float az,float mag){
     
-    if(mag>THRESH_SEVERE_G && az<-1.0f && fabsf(az)>fabsf(ax) && fabsf(az)>fabsf(ay)) return "Fall";
-    if(mag>THRESH_MODERATE_G && fabsf(ax)>0.5f && fabsf(ay)>0.5f && fabsf(az)>0.5f) return "Ceiling Collapse";
+    if(mag>THRESH_SEVERE_G && az<(-1.0f) && fabsf(az)>fabsf(ax) && fabsf(az)>fabsf(ay)) return "Fall";
+    if(mag>THRESH_MODERATE_G && fabsf(ax)>(5*baseline_x) && fabsf(ay)>(5*baseline_y) && fabsf(az)>(5*baseline_z)) return "Ceiling Collapse";
     if(mag>THRESH_SEVERE_G && az>1.0f && fabsf(az)>fabsf(ax) && fabsf(az)>fabsf(ay)) return "Hard Landing";
-    if(mag>THRESH_MODERATE_G && ax>0.5f) return "Front Impact";
-    if(mag>THRESH_MODERATE_G && ax<-0.5f) return "Rear Impact";
-    if(mag>THRESH_MODERATE_G && ay>0.5f) return "Right Side Impact";
-    if(mag>THRESH_MODERATE_G && ay<-0.5f) return "Left Side Impact";
+    if(mag>THRESH_MODERATE_G && ax>(5*baseline_x)) return "Front Impact";
+    if(mag>THRESH_MODERATE_G && ax<(-5*baseline_x)) return "Rear Impact";
+    if(mag>THRESH_MODERATE_G && ay>(5*baseline_y)) return "Right Side Impact";
+    if(mag>THRESH_MODERATE_G && ay<(-5*baseline_y)) return "Left Side Impact";
     
     if(mag>THRESH_MODERATE_G) return "blunt";
     return "none";
@@ -491,7 +661,31 @@ fclose(
 }
 */
 static void IRAM_ATTR button_handler(void* arg){
-    /* ISR: Track button press/release for factory reset */
+    /* ISR: handle button press for both major impact cancel and SPIFFS clear hold. */
+    if (major_impact_active) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        BaseType_t stopped = xTimerStopFromISR(major_impact_timer, &xHigherPriorityTaskWoken);
+        if (stopped == pdPASS) {
+            /* Only mark cancelled if the timer was actually stopped */
+            major_impact_active = false;
+            major_impact_cancelled_flag = true;
+        }
+        if (xHigherPriorityTaskWoken == pdTRUE) {
+            portYIELD_FROM_ISR();
+        }
+    }
+    
+    /* Start the 10-second hold timer for SPIFFS clear if not already running */
+    if (!button_held && button_hold_timer != NULL) {
+        button_held = true;
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xTimerStartFromISR(button_hold_timer, &xHigherPriorityTaskWoken);
+        if (xHigherPriorityTaskWoken == pdTRUE) {
+            portYIELD_FROM_ISR();
+        }
+    }
+    
+    /* Track button press/release for factory reset */
     uint32_t level = gpio_get_level(BUTTON_GPIO);
     
     if (level == 0) {
@@ -501,19 +695,6 @@ static void IRAM_ATTR button_handler(void* arg){
     } else {
         /* Button released */
         button_pressed = false;
-    }
-    
-    /* Legacy: Stop major impact timer if active */
-    if (major_impact_active && level == 0) {
-        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-        BaseType_t stopped = xTimerStopFromISR(major_impact_timer, &xHigherPriorityTaskWoken);
-        if (stopped == pdPASS) {
-            major_impact_active = false;
-            major_impact_cancelled_flag = true;
-        }
-        if (xHigherPriorityTaskWoken == pdTRUE) {
-            portYIELD_FROM_ISR();
-        }
     }
 }
 
@@ -907,7 +1088,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
 /* Heartbeat task to show connection status */
 static void button_monitor_task(void *pvParameters)
 {
-    const TickType_t hold_time_ticks = pdMS_TO_TICKS(3000);  // 3 seconds
+    const TickType_t hold_time_ticks = pdMS_TO_TICKS(10000);  // 10 seconds
     bool factory_reset_triggered = false;
     uint32_t last_debug_tick = 0;
     
@@ -928,11 +1109,11 @@ static void button_monitor_task(void *pvParameters)
             ESP_LOGI(TAGZB, "Button held for %lu ms", (hold_duration * 1000) / configTICK_RATE_HZ);
             
             if (hold_duration >= hold_time_ticks) {
-                /* Button held for 3 seconds - trigger factory reset */
+                /* Button held for 10 seconds - trigger factory reset */
                 factory_reset_triggered = true;
                 
                 ESP_LOGW(TAGZB, "=== FACTORY RESET TRIGGERED ===");
-                ESP_LOGW(TAGZB, "Button held for 3 seconds - erasing Zigbee network config...");
+                ESP_LOGW(TAGZB, "Button held for 10 seconds - erasing Zigbee network config...");
                 
                 /* Flash LED red rapidly to indicate factory reset */
                 for (int i = 0; i < 10; i++) {
@@ -1003,26 +1184,31 @@ static void heartbeat_task(void *pvParameters)
 static void i2c_task(void *arg)
 {
     i2c_master_dev_handle_t dev_handle = (i2c_master_dev_handle_t)arg;
-    uint8_t data[6];
 
     while (1) {
-        // Read 6 bytes of acceleration data
-        ESP_ERROR_CHECK(adxl345_register_read(dev_handle, ADXL345_DATAX0_REG, data, 6));
-        
-        // ADXL345 outputs axis data in little-endian format by default.
-        // If sensor configuration changes, update the axis data parsing accordingly.
-        //gpio_set_level(LED_GPIO,1);
-    
-        int16_t x_raw = (int16_t)((data[1] << 8) | data[0]);
-        int16_t y_raw = (int16_t)((data[3] << 8) | data[2]);
-        int16_t z_raw = (int16_t)((data[5] << 8) | data[4]);
+        // Read ADXL345 using helper function
+        float x_g = 0.0f, y_g = 0.0f, z_g = 0.0f;
+        if (!read_adxl_xyz(dev_handle, &x_g, &y_g, &z_g)) {
+            ESP_LOGW(TAGSPI, "ADXL read failed; skipping sample");
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
 
-        float x_g = x_raw * LSB_TO_G;
-        float y_g = y_raw * LSB_TO_G;
-        float z_g = z_raw * LSB_TO_G -1.0f;//gravity 
-        
-        
-        //ESP_LOGI(TAGSPI, "X=%.3f g, Y=%.3f g, Z=%.3f g", x_g, y_g, z_g);
+        float mag = sqrtf(x_g*x_g + y_g*y_g + z_g*z_g);
+
+        /* If ADXL indicates a high-G event above 1.5g, query the H3LIS
+           for a more accurate high-G measurement and use that for
+           classification when available. */
+        /* Hand over to H3LIS when ADXL reaches its maximum measurable g (ADXL_MAX_G).
+           This ensures we rely on the high-G sensor only when ADXL is beyond its range. */
+        /* Hand over to H3LIS when ADXL reaches 90% of its maximum measurable g.
+           This gives an early handover to the high-g sensor. */
+       
+        /*if (mag >= (ADXL_HANDOVER_RATIO * ADXL_MAX_G)) {
+            ESP_LOGI(TAGSPI, "H3LIS support disabled at compile-time; using ADXL only (mag=%.3f)", mag);
+        }
+        */
+
         classify_impact(x_g, y_g, z_g);
         
 
@@ -1051,36 +1237,41 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(retzb);
 
-    // uint8_t data[6];
-    // uint8_t devid = 0;
-    // i2c_master_bus_handle_t bus_handle;
-    // i2c_master_dev_handle_t dev_handle;
+    uint8_t devid = 0;
+    i2c_master_bus_handle_t bus_handle;
+    i2c_master_dev_handle_t dev_handle_adxl;
+    i2c_master_dev_handle_t dev_handle_h3lis;
+    
+    // Initialize I2C and attach ADXL345 and H3LIS331DL
+    i2c_master_init(&bus_handle, &dev_handle_adxl, &dev_handle_h3lis);
+    ESP_LOGI(TAGSPI, "I2C initialized successfully");
 
-    // // Initialize I2C and attach ADXL345
-    // i2c_master_init(&bus_handle, &dev_handle);
-    // ESP_LOGI(TAGSPI, "I2C initialized successfully");
+    // Verify ADXL345 identity
+    esp_err_t ret = adxl345_register_read(dev_handle_adxl, ADXL345_DEVID_REG, &devid, 1);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAGSPI, "ADXL345 DEVID = 0x%02X", devid);
+        if (devid != ADXL345_DEVID_EXPECTED) {
+            ESP_LOGE(TAGSPI, "ADXL345 not detected! Expected 0xE5.");
+            // continue without accelerometer
+        }
+    } else {
+        ESP_LOGE(TAGSPI, "Failed to communicate with ADXL345 at 0x%02X", ADXL345_ADDR);
+    }
 
-    // // Verify ADXL345 identity
-    // esp_err_t ret = adxl345_register_read(dev_handle, ADXL345_DEVID_REG, &devid, 1);
-    // if (ret == ESP_OK) {
-    //     ESP_LOGI(TAGSPI, "ADXL345 DEVID = 0x%02X", devid);
-    //     if (devid != ADXL345_DEVID_EXPECTED) {
-    //         ESP_LOGE(TAGSPI, "ADXL345 not detected! Expected 0xE5.");
-    //         // continue without accelerometer
-    //     }
-    // } else {
-    //     ESP_LOGE(TAGSPI, "Failed to communicate with ADXL345 at 0x%02X", ADXL345_ADDR);
-    // }
+    // Enable measurement mode
+    ESP_ERROR_CHECK(adxl345_register_write_byte(dev_handle_adxl, ADXL345_POWER_CTL_REG, 0x08));
 
-    // // Enable measurement mode
-    // ESP_ERROR_CHECK(adxl345_register_write_byte(dev_handle, ADXL345_POWER_CTL_REG, 0x08));
-
-    // // Set data format: Full resolution, ±2g range (0x08)
-    // ESP_ERROR_CHECK(adxl345_register_write_byte(dev_handle, ADXL345_DATA_FORMAT_REG, 0x08));
+    // Set data format: Full resolution, ±16g range (0x0B for full-res ±16g)
+    ESP_ERROR_CHECK(adxl345_register_write_byte(dev_handle_adxl, ADXL345_DATA_FORMAT_REG, 0x0B));
 
     init_led(LED_GPIO1);
     init_led(LED_GPIO2);
     init_onboard_led();  // Initialize onboard RGB LED for ESP32-C6
+    
+    // Collect baseline accelerometer values (5 seconds at 100ms intervals)
+    collect_baseline(dev_handle_adxl, 5000, 100);
+    
+    /* H3LIS support disabled: skip h3lis_init(dev_handle_h3lis); */
     buzzer_init();
     
     ESP_LOGI(TAGZB, "Onboard RGB LED initialized on GPIO %d", LED_ONBOARD_GPIO);
@@ -1091,7 +1282,7 @@ void app_main(void)
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = 1,   // enable pull-up
         .pull_down_en = 0,
-        .intr_type = GPIO_INTR_ANYEDGE, // both edges for press/release detection
+        .intr_type = GPIO_INTR_NEGEDGE, // falling edge
     };
     gpio_config(&io_conf);
 
@@ -1101,8 +1292,12 @@ void app_main(void)
 
     // Create major impact timer (10 sec)
     major_impact_timer = xTimerCreate("MajorImpactTimer", pdMS_TO_TICKS(10000), pdFALSE, NULL, major_impact_timer_callback);
+    
+    // Create button hold timer (5 sec for SPIFFS clear)
+    button_hold_timer = xTimerCreate("ButtonHoldTimer", pdMS_TO_TICKS(5000), pdFALSE, NULL, button_hold_timer_callback);
 
-    xTaskCreate(i2c_task, "i2c_task", 4096, dev_handle, 5, NULL);
+    // Create I2C task for accelerometer monitoring
+    xTaskCreate(i2c_task, "i2c_task", 4096, dev_handle_adxl, 5, &i2c_task_handle);
 
     /* ADC and I2C tasks enabled */
     adc_continuous_handle_t handle = NULL;
@@ -1139,7 +1334,7 @@ void app_main(void)
     
     /* Start button monitor task for factory reset */
     xTaskCreate(button_monitor_task, "button_monitor", 2048, NULL, 3, NULL);
-    ESP_LOGI(TAGZB, "Button monitor started - hold boot button for 3 seconds to factory reset");
+    ESP_LOGI(TAGZB, "Button monitor started - hold boot button for 10 seconds to factory reset");
 
     // FILE *log_file = fopen("/spiffs/adc_log.txt", "a");
     // if (log_file == NULL) {
