@@ -56,14 +56,14 @@
 //Definitions for SPI and ADXL345
 static const char *TAGSPI = "ADXL345";
 
-#define I2C_MASTER_SCL_IO           9 // SCL on ESP32-C6 (GPIO1) - using bit-bang (disabled when using boot button)
-#define I2C_MASTER_SDA_IO           8 // SDA on ESP32-C6 (GPIO0) - using bit-bang
-#define LED_GPIO1                   18 //CONFIG_LED_GPIO
-#define LED_GPIO2                   13 //CONFIG_LED_GPIO
+#define I2C_MASTER_SCL_IO           11 // SCL on ESP32-C6
+#define I2C_MASTER_SDA_IO           10 // SDA on ESP32-C6
+#define LED_GPIO1                   19 //CONFIG_LED_GPIO
+#define LED_GPIO2                   20 //CONFIG_LED_GPIO
 #define LED_ONBOARD_GPIO            8  // Onboard RGB LED for ESP32-C6-DevKit
 
-#define BUTTON_GPIO                 9  // Boot button on ESP32-C6-DevKit
-#define BUZZER_GPIO                 17 //CONFIG_BUZZER_GPIO
+#define BUTTON_GPIO                 23  // Boot button on ESP32-C6-DevKit
+#define BUZZER_GPIO                 18 //CONFIG_BUZZER_GPIO
 
 static led_strip_handle_t s_led_strip = NULL;
 
@@ -126,10 +126,10 @@ static switch_func_pair_t button_func_pair[] = {
     {GPIO_INPUT_IO_TOGGLE_SWITCH, SWITCH_ONOFF_TOGGLE_CONTROL}
 };
 
-static const char *TAGZB = "ESP_ZB_ON_OFF_SWITCH";
+static const char *TAGZB = "Zigbee";
 
 
-static adc_channel_t channel[1] = {ADC_CHANNEL_6};  // GPIO11 on ESP32-C6
+static adc_channel_t channel[1] = {ADC_CHANNEL_3};  // GPIO3 on ESP32-C6 for gas sensor
 static TaskHandle_t adc_task_handle = NULL;
 static TaskHandle_t i2c_task_handle = NULL;
 static TaskHandle_t s_task_handle = NULL;
@@ -1099,28 +1099,28 @@ void app_main(void)
     gpio_install_isr_service(0);
     gpio_isr_handler_add(BUTTON_GPIO, button_handler, NULL);
 
-    // // Create major impact timer (10 sec)
-    // major_impact_timer = xTimerCreate("MajorImpactTimer", pdMS_TO_TICKS(10000), pdFALSE, NULL, major_impact_timer_callback);
+    // Create major impact timer (10 sec)
+    major_impact_timer = xTimerCreate("MajorImpactTimer", pdMS_TO_TICKS(10000), pdFALSE, NULL, major_impact_timer_callback);
 
-    // xTaskCreate(i2c_task, "i2c_task", 4096, dev_handle, 5, NULL);
+    xTaskCreate(i2c_task, "i2c_task", 4096, dev_handle, 5, NULL);
 
-    /* ADC and I2C tasks commented out for testing without sensors */
-    // adc_continuous_handle_t handle = NULL;
-    // continuous_adc_init(channel, sizeof(channel) / sizeof(adc_channel_t), &handle);
+    /* ADC and I2C tasks enabled */
+    adc_continuous_handle_t handle = NULL;
+    continuous_adc_init(channel, sizeof(channel) / sizeof(adc_channel_t), &handle);
 
-    // /* Create the ADC task and store its handle before registering callbacks
-    //    or starting the ADC. This prevents the ADC ISR from attempting to
-    //    notify a NULL task handle if conversions occur immediately. */
-    // xTaskCreate(adc_task, "adc_task", 4096, handle, 5, &adc_task_handle);
-    // s_task_handle = adc_task_handle;
+    /* Create the ADC task and store its handle before registering callbacks
+       or starting the ADC. This prevents the ADC ISR from attempting to
+       notify a NULL task handle if conversions occur immediately. */
+    xTaskCreate(adc_task, "adc_task", 4096, handle, 5, &adc_task_handle);
+    s_task_handle = adc_task_handle;
 
-    // adc_continuous_evt_cbs_t cbs = {
-    //     .on_conv_done = s_conv_done_cb,
-    // };
-    // ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(handle, &cbs, NULL));
-    // ESP_ERROR_CHECK(adc_continuous_start(handle));
+    adc_continuous_evt_cbs_t cbs = {
+        .on_conv_done = s_conv_done_cb,
+    };
+    ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(handle, &cbs, NULL));
+    ESP_ERROR_CHECK(adc_continuous_start(handle));
     
-    ESP_LOGI(TAGZB, "ADC and I2C tasks disabled for DevKit testing");
+    ESP_LOGI(TAGZB, "ADC and I2C tasks enabled");
 
     /* Configure Zigbee platform (radio/host) before starting the Zigbee task */
     {
