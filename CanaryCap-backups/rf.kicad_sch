@@ -1,0 +1,21 @@
+(kicad_sch
+	(version 20250114)
+	(generator "eeschema")
+	(generator_version "9.0")
+	(uuid "4a0ae798-2c64-4ce5-a1d1-85e4ee2c41fa")
+	(paper "A4")
+	(title_block
+		(date "2025-10-01")
+	)
+	(lib_symbols)
+	(text "Now included in Micro (WROOM)\n"
+		(exclude_from_sim no)
+		(at 81.28 68.58 0)
+		(effects
+			(font
+				(size 2.54 2.54)
+			)
+		)
+		(uuid "10e46dd8-4a33-450e-93e8-e634c1872f15")
+	)
+)

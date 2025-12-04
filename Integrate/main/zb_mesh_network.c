@@ -25,6 +25,12 @@ static SemaphoreHandle_t mesh_mutex = NULL;
 /* Callbacks */
 static zb_mesh_state_change_cb_t state_change_cb = NULL;
 static zb_mesh_device_event_cb_t device_event_cb = NULL;
+static uint16_t s_last_joined_addr = 0xFFFF;
+
+uint16_t zb_mesh_get_last_joined_addr(void)
+{
+    return s_last_joined_addr;
+}
 
 /* ============================================================================
  * Initialization
@@ -355,7 +361,7 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
             esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
             
             zb_mesh_update_state(ZB_MESH_STATE_JOINED);
-            zb_cluster_send_network_status(CANARY_NETWORK_CONNECTED);
+            /* Don't send network status here - wait for steering to complete to avoid buffer exhaustion */
         } else {
             ESP_LOGW(TAG, "Formation failed: %s", esp_err_to_name(err_status));
             zb_mesh_update_state(ZB_MESH_STATE_DISCONNECTED);
@@ -366,7 +372,11 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
         if (err_status == ESP_OK) {
             ESP_LOGI(TAG, "Network steering completed");
             zb_mesh_update_state(ZB_MESH_STATE_JOINED);
+            
+            /* Delay before sending network status to allow stack to stabilize */
+            vTaskDelay(pdMS_TO_TICKS(1000));
             zb_cluster_send_network_status(CANARY_NETWORK_CONNECTED);
+            
             zb_mesh_print_network_info();
         } else {
             ESP_LOGW(TAG, "Steering failed: %s", esp_err_to_name(err_status));
@@ -380,6 +390,7 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
                 (esp_zb_zdo_signal_device_annce_params_t *)esp_zb_app_signal_get_params(p_sg_p);
             
             ESP_LOGI(TAG, "New device announced: 0x%04x", dev_annce_params->device_short_addr);
+            s_last_joined_addr = dev_annce_params->device_short_addr;
             
             if (device_event_cb) {
                 device_event_cb(true, dev_annce_params->device_short_addr);
@@ -400,6 +411,7 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
 
     case ESP_ZB_ZDO_SIGNAL_LEAVE:
         ESP_LOGW(TAG, "Device left network");
+        s_last_joined_addr = 0xFFFF;
         zb_mesh_update_state(ZB_MESH_STATE_DISCONNECTED);
         zb_cluster_send_network_status(CANARY_NETWORK_DISCONNECTED);
         break;

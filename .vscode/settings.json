@@ -1,6 +1,6 @@
 {
   "C_Cpp.intelliSenseEngine": "default",
-  "idf.port": "/dev/tty.debug-console",
+  "idf.port": "/dev/tty.usbmodem1101",
   "idf.flashType": "UART",
   "files.associations": {
     "sdkconfig.h": "c",

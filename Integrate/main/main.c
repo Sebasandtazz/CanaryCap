@@ -21,7 +21,6 @@
 #include "ha/esp_zigbee_ha_standard.h"
 #include "esp_zb_switch.h"
 #include "zcl/esp_zigbee_zcl_basic.h"
-#include "led_strip.h"
 #include "zcl/esp_zigbee_zcl_command.h"
 #include "zb_cluster_manager.h"
 #include "zb_mesh_network.h"
@@ -48,9 +47,9 @@
  * When commented out, the firmware builds as a COORDINATOR by default.
  */
 #define ZB_BUILD_AS_ROUTER
-#define ZB_PERMIT_JOIN_DURATION 600
+#define ZB_PERMIT_JOIN_DURATION 1200  //seconds
 /* Periodic reopen interval (seconds): how often coordinator re-opens network to allow joins */
-#define ZB_REOPEN_INTERVAL_SECONDS 300
+#define ZB_REOPEN_INTERVAL_SECONDS 30 // 3 minutes
 
 //Definitions for SPI and ADXL345
 static const char *TAGSPI = "ADXL345";
@@ -59,12 +58,14 @@ static const char *TAGSPI = "ADXL345";
 #define I2C_MASTER_SDA_IO           10 // SDA on ESP32-C6
 #define LED_GPIO1                   19 //CONFIG_LED_GPIO
 #define LED_GPIO2                   20 //CONFIG_LED_GPIO
-#define LED_ONBOARD_GPIO            8  // Onboard RGB LED for ESP32-C6-DevKit
 
-#define BUTTON_GPIO                 23  // Boot button on ESP32-C6-DevKit
+#define BUTTON_GPIO                 23  // Boot button for impact cancel and Zigbee reset
+#define SPIFFS_CLEAR_BUTTON_GPIO    8   // Boot button for SPIFFS clear
 #define BUZZER_GPIO                 18 //CONFIG_BUZZER_GPIO
-
-static led_strip_handle_t s_led_strip = NULL;
+#define HEARTBEAT_LED_GPIO          19 //CONFIG_HEARTBEAT_LED_GPIO
+#define HEALTH_LED_GPIO            20 //CONFIG_HEALTHY_LED_GPIO
+#define STATUS_LED_GPIO            21 //CONFIG_STATUS_LED_GPIO
+#define PENDING_LED_GPIO           22 //CONFIG_PENDING_LED_GPIO
 
 #define I2C_MASTER_NUM              I2C_NUM_0
 #define I2C_MASTER_FREQ_HZ          100000  // Start with standard 100kHz I2C speed
@@ -103,8 +104,8 @@ static led_strip_handle_t s_led_strip = NULL;
 /* Hand over when ADXL reaches this fraction of its max (configurable) */
 #define ADXL_HANDOVER_RATIO         0.90f
 
-#define THRESH_SEVERE_G             10.0f
-#define THRESH_MODERATE_G           5.0f
+#define THRESH_SEVERE_G             4.0f
+#define THRESH_MODERATE_G           2.0f
 #define MAX_LOG_FILE_SIZE           (100 * 1024)  // 100 KB max log file size
 
 static TimerHandle_t major_impact_timer;
@@ -130,11 +131,11 @@ static bool button_held = false;
 //Def for Buzzer
 #define LEDC_TIMER              LEDC_TIMER_0
 #define LEDC_MODE               LEDC_LOW_SPEED_MODE
-#define LEDC_OUTPUT_IO          (19) // Define the output GPIO
+#define LEDC_OUTPUT_IO          (18) // Buzzer GPIO (matches BUZZER_GPIO)
 #define LEDC_CHANNEL            LEDC_CHANNEL_0
 #define LEDC_DUTY_RES           LEDC_TIMER_13_BIT // Set duty resolution to 13 bits
 #define LEDC_DUTY               (4096) // Set duty to 50%. (2 ** 13) * 50% = 4096
-#define LEDC_FREQUENCY          (4000) // Frequency in Hertz. Set frequency at 4 kHz
+#define LEDC_FREQUENCY          (2700) // Resonant frequency - try 2700Hz for max volume
 
 //Def for ADC
 #define EXAMPLE_ADC_UNIT                    ADC_UNIT_1
@@ -161,6 +162,9 @@ static switch_func_pair_t button_func_pair[] = {
 
 static const char *TAGZB = "Zigbee";
 
+/* Global flags for alert cancellation */
+static volatile bool severe_alert_active = false;
+static volatile bool network_disconnected_alert_active = false;
 
 static adc_channel_t channel[1] = {ADC_CHANNEL_3};  // GPIO3 on ESP32-C6 for gas sensor
 static TaskHandle_t adc_task_handle = NULL;
@@ -355,15 +359,15 @@ void read_log_file(const char *file_path)
 static void button_hold_timer_callback(TimerHandle_t xTimer)
 {
     
-    if (gpio_get_level(BUTTON_GPIO) == 0) {
+    if (gpio_get_level(SPIFFS_CLEAR_BUTTON_GPIO) == 0) {
         FILE *f = fopen("/spiffs/i2c_log.txt", "w");
         impact_count = 0;
         gpio_set_level(LED_GPIO2, 1);
         fclose(f);
-        ESP_LOGI(TAGSPI, "Log file cleared by 5-second button hold.");
+        ESP_LOGI(TAGSPI, "Log file cleared by 5-second GPIO8 button hold.");
         button_held = false;
     } else {
-        ESP_LOGI(TAGSPI, "Button released before 5 seconds; clear cancelled.");
+        ESP_LOGI(TAGSPI, "GPIO8 button released before 5 seconds; clear cancelled.");
         button_held = false;
     }
 }
@@ -391,27 +395,6 @@ static void init_led(int gpio){
     gpio_config_t io_conf = {.pin_bit_mask=1ULL<<gpio,.mode=GPIO_MODE_OUTPUT,.pull_up_en=0,.pull_down_en=0,.intr_type=GPIO_INTR_DISABLE};
     gpio_config(&io_conf);
     gpio_set_level(gpio,1);  // Start OFF (active LOW)
-}
-
-static void init_onboard_led(void){
-    led_strip_config_t led_strip_conf = {
-        .max_leds = 1,
-        .strip_gpio_num = LED_ONBOARD_GPIO,
-    };
-    led_strip_rmt_config_t rmt_conf = {
-        .resolution_hz = 10 * 1000 * 1000, // 10MHz
-    };
-    ESP_ERROR_CHECK(led_strip_new_rmt_device(&led_strip_conf, &rmt_conf, &s_led_strip));
-    /* Turn off LED initially */
-    led_strip_set_pixel(s_led_strip, 0, 0, 0, 0);
-    led_strip_refresh(s_led_strip);
-}
-
-static void set_onboard_led(uint8_t r, uint8_t g, uint8_t b){
-    if (s_led_strip) {
-        led_strip_set_pixel(s_led_strip, 0, r, g, b);
-        led_strip_refresh(s_led_strip);
-    }
 }
 
 static void flash_led(int GPIO){
@@ -540,7 +523,6 @@ static void collect_baseline(i2c_master_dev_handle_t dev_handle, uint32_t durati
 
     float sx = 0.0f, sy = 0.0f, sz = 0.0f, sm = 0.0f;
     int samples = 0;
-    uint8_t data[6];
 
     ESP_LOGI(TAGSPI, "Collecting baseline for %u ms (%d samples)...", duration_ms, max_samples);
     for (int i = 0; i < max_samples; ++i) {
@@ -583,6 +565,9 @@ static const char* infer_impact_type(float ax,float ay,float az,float mag){
     if(mag>THRESH_MODERATE_G) return "blunt";
     return "none";
 }
+
+/* Forward declaration for severe impact alert task */
+static void severe_impact_alert_task(void *param);
 
 static void classify_impact(float x_g, float y_g, float z_g){
     float mag=sqrtf(x_g*x_g+y_g*y_g+z_g*z_g);
@@ -636,12 +621,34 @@ static void classify_impact(float x_g, float y_g, float z_g){
     
     /* Send impact alert via cluster manager */
     if (severity >= CANARY_IMPACT_MAJOR) {
-        zb_cluster_send_impact_alert(severity, cluster_type, mag, x_g, y_g, z_g);
+        if (zb_mesh_is_joined()) {
+            ESP_LOGW(TAGZB, "Sending impact alert over Zigbee: type=%s severity=%s mag=%.2fg",
+                     zb_cluster_impact_type_to_string(cluster_type),
+                     zb_cluster_impact_severity_to_string(severity),
+                     mag);
+            zb_cluster_send_impact_alert(severity, cluster_type, mag, x_g, y_g, z_g);
+        } else {
+            ESP_LOGE(TAGZB, "Impact alert NOT sent: device not joined to Zigbee network");
+        }
         
-        /* Local alerts for severe impacts */
+        /* Local alerts for severe impacts - cancellable with button */
         if (severity == CANARY_IMPACT_SEVERE) {
-            start_led_blink(LED_GPIO2, 150, 150);
-            buzzer_beep_ms(3000, 3000);
+            severe_alert_active = true;
+            ESP_LOGW(TAGZB, "LOCAL SEVERE IMPACT - Press GPIO23 button to cancel alert");
+            xTaskCreate(severe_impact_alert_task, "severe_alert", 2048, NULL, 5, NULL);
+        } else if (severity == CANARY_IMPACT_MAJOR) {
+            /* Major impact: 3-second local indication */
+            int64_t start_time = esp_timer_get_time();
+            int64_t duration_us = 3000000;  // 3 seconds
+            
+            while ((esp_timer_get_time() - start_time) < duration_us) {
+                gpio_set_level(HEALTH_LED_GPIO, 0);  // ON
+                buzzer_beep_ms(LEDC_FREQUENCY, 150);  // Resonant frequency for max volume
+                vTaskDelay(pdMS_TO_TICKS(150));
+                gpio_set_level(HEALTH_LED_GPIO, 1);  // OFF
+                vTaskDelay(pdMS_TO_TICKS(150));
+            }
+            gpio_set_level(HEALTH_LED_GPIO, 1);  // Ensure OFF
         }
     }
    
@@ -660,8 +667,48 @@ fwrite(
 fclose(
 }
 */
+
+/* GPIO 8 button ISR - SPIFFS clear */
+static void IRAM_ATTR spiffs_clear_button_handler(void* arg){
+    /* Start the 5-second hold timer for SPIFFS clear */
+    uint32_t level = gpio_get_level(SPIFFS_CLEAR_BUTTON_GPIO);
+    
+    if (level == 0) {
+        /* Button pressed */
+        if (!button_held && button_hold_timer != NULL) {
+            button_held = true;
+            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+            xTimerStartFromISR(button_hold_timer, &xHigherPriorityTaskWoken);
+            if (xHigherPriorityTaskWoken == pdTRUE) {
+                portYIELD_FROM_ISR();
+            }
+        }
+    } else {
+        /* Button released */
+        if (button_held && button_hold_timer != NULL) {
+            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+            xTimerStopFromISR(button_hold_timer, &xHigherPriorityTaskWoken);
+            button_held = false;
+            if (xHigherPriorityTaskWoken == pdTRUE) {
+                portYIELD_FROM_ISR();
+            }
+        }
+    }
+}
+
 static void IRAM_ATTR button_handler(void* arg){
-    /* ISR: handle button press for both major impact cancel and SPIFFS clear hold. */
+    /* ISR: GPIO 23 button - handle both major and severe impact cancellation */
+    
+    /* Track button press/release for factory reset */
+    uint32_t level = gpio_get_level(BUTTON_GPIO);
+    
+    /* Cancel severe alert on button press */
+    if (level == 0 && severe_alert_active) {
+        severe_alert_active = false;
+        ESP_EARLY_LOGI("ISR", "Severe alert cancelled by button press");
+    }
+    
+    /* Cancel major impact timer */
     if (major_impact_active) {
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
         BaseType_t stopped = xTimerStopFromISR(major_impact_timer, &xHigherPriorityTaskWoken);
@@ -674,19 +721,6 @@ static void IRAM_ATTR button_handler(void* arg){
             portYIELD_FROM_ISR();
         }
     }
-    
-    /* Start the 10-second hold timer for SPIFFS clear if not already running */
-    if (!button_held && button_hold_timer != NULL) {
-        button_held = true;
-        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-        xTimerStartFromISR(button_hold_timer, &xHigherPriorityTaskWoken);
-        if (xHigherPriorityTaskWoken == pdTRUE) {
-            portYIELD_FROM_ISR();
-        }
-    }
-    
-    /* Track button press/release for factory reset */
-    uint32_t level = gpio_get_level(BUTTON_GPIO);
     
     if (level == 0) {
         /* Button pressed (active low) */
@@ -776,9 +810,9 @@ static void continuous_adc_init(adc_channel_t *channel, uint8_t channel_num, adc
         adc_pattern[i].unit = EXAMPLE_ADC_UNIT;
         adc_pattern[i].bit_width = EXAMPLE_ADC_BIT_WIDTH;
 
-        ESP_LOGI(TAGADC, "adc_pattern[%d].atten is :%"PRIx8, i, adc_pattern[i].atten);
-        ESP_LOGI(TAGADC, "adc_pattern[%d].channel is :%"PRIx8, i, adc_pattern[i].channel);
-        ESP_LOGI(TAGADC, "adc_pattern[%d].unit is :%"PRIx8, i, adc_pattern[i].unit);
+        // ESP_LOGI(TAGADC, "adc_pattern[%d].atten is :%"PRIx8, i, adc_pattern[i].atten);
+        // ESP_LOGI(TAGADC, "adc_pattern[%d].channel is :%"PRIx8, i, adc_pattern[i].channel);
+        // ESP_LOGI(TAGADC, "adc_pattern[%d].unit is :%"PRIx8, i, adc_pattern[i].unit);
     }
     dig_cfg.adc_pattern = adc_pattern;
     ESP_ERROR_CHECK(adc_continuous_config(handle, &dig_cfg));
@@ -811,14 +845,14 @@ void log_adc_data_to_spiffs(adc_continuous_data_t *parsed_data, uint32_t num_sam
     for (uint32_t i = 0; i < num_samples; i++) {
         if (parsed_data[i].valid) {
             uint32_t voltage_mv = raw_to_voltage(parsed_data[i].raw_data);
-            if(voltage_mv >= 3300)
+            if(voltage_mv >= 2700)  // 2.7V threshold for gas detection
             {
                 /* Send gas alert via cluster manager */
                 zb_cluster_send_gas_alert(true, voltage_mv, parsed_data[i].raw_data);
                 
                 /* Local alert indicators */
                 start_led_blink(LED_GPIO2, 200, 200);
-                buzzer_beep_ms(2000, 3000);
+                buzzer_beep_ms(LEDC_FREQUENCY, 3000);
 
                 fprintf(f, "ADC%d, Channel: %d, Value: %" PRIu32 " (GAS ALERT)\n",
                     parsed_data[i].unit + 1,
@@ -853,7 +887,7 @@ void adc_task(void *param)
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         ret = adc_continuous_read(handle, result, EXAMPLE_READ_LEN, &ret_num, 0);
         if (ret == ESP_OK) {
-            ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32" bytes", ret, ret_num);
+            // ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32" bytes", ret, ret_num);
 
             adc_continuous_data_t parsed_data[ret_num / SOC_ADC_DIGI_RESULT_BYTES];
             uint32_t num_parsed_samples = 0;
@@ -864,19 +898,29 @@ void adc_task(void *param)
                     if (parsed_data[i].valid) {
                         uint32_t raw = parsed_data[i].raw_data;
                         uint32_t voltage_mv = raw_to_voltage(raw);
+                        
+                        /* Check for gas detection at 2.7V threshold */
+                        if (voltage_mv >= 2700) {
+                            ESP_LOGW(TAGADC, "GAS DETECTED! Voltage: %ld mV", voltage_mv);
+                            /* Send gas alert over Zigbee */
+                            if (zb_mesh_is_joined()) {
+                                zb_cluster_send_gas_alert(true, voltage_mv, raw);
+                            }
+                        }
+                        
                         if(i % 32 == 0) { // Log every 32nd valid sample
-                        ESP_LOGI(TAGADC, "ADC%d Ch%d raw=%"PRIu32" mV=%"PRIu32,
-                                parsed_data[i].unit + 1,
-                                parsed_data[i].channel,
-                                raw,
-                                voltage_mv);
+                        // ESP_LOGI(TAGADC, "ADC%d Ch%d raw=%"PRIu32" mV=%"PRIu32,
+                        //         parsed_data[i].unit + 1,
+                        //         parsed_data[i].channel,
+                        //         raw,
+                        //         voltage_mv);
                             } 
                         }
                         else {
-                        ESP_LOGW(TAGADC, "Invalid data [ADC%d_Ch%d_%"PRIu32"]",
-                                parsed_data[i].unit + 1,
-                                parsed_data[i].channel,
-                                parsed_data[i].raw_data);
+                        // ESP_LOGW(TAGADC, "Invalid data [ADC%d_Ch%d_%"PRIu32"]",
+                        //         parsed_data[i].unit + 1,
+                        //         parsed_data[i].channel,
+                        //         parsed_data[i].raw_data);
                         }
                     }
                     log_adc_data_to_spiffs(parsed_data, num_parsed_samples);
@@ -900,6 +944,53 @@ void adc_task(void *param)
     }
 }
 
+// --- Task functions for continuous alerts ---
+
+static void network_disconnect_alert_task(void *param)
+{
+    ESP_LOGE(TAGZB, "NETWORK DISCONNECTED - Flashing all LEDs until rejoin");
+    while (network_disconnected_alert_active) {
+        /* Flash all 4 LEDs */
+        gpio_set_level(HEARTBEAT_LED_GPIO, 0);  // ON
+        gpio_set_level(HEALTH_LED_GPIO, 0);     // ON
+        gpio_set_level(STATUS_LED_GPIO, 0);     // ON
+        gpio_set_level(PENDING_LED_GPIO, 0);    // ON
+        buzzer_beep_ms(3000, 300);
+        vTaskDelay(pdMS_TO_TICKS(300));
+        
+        gpio_set_level(HEARTBEAT_LED_GPIO, 1);  // OFF
+        gpio_set_level(HEALTH_LED_GPIO, 1);     // OFF
+        gpio_set_level(STATUS_LED_GPIO, 1);     // OFF
+        gpio_set_level(PENDING_LED_GPIO, 1);    // OFF
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+    /* Cleanup when reconnected */
+    gpio_set_level(HEARTBEAT_LED_GPIO, 1);
+    gpio_set_level(HEALTH_LED_GPIO, 1);
+    gpio_set_level(STATUS_LED_GPIO, 1);
+    gpio_set_level(PENDING_LED_GPIO, 1);
+    ESP_LOGI(TAGZB, "Network reconnected - stopping disconnect alert");
+    vTaskDelete(NULL);
+}
+
+static void severe_impact_alert_task(void *param)
+{
+    while (severe_alert_active) {
+        gpio_set_level(HEALTH_LED_GPIO, 0);  // ON
+        gpio_set_level(PENDING_LED_GPIO, 0); // ON
+        buzzer_beep_ms(LEDC_FREQUENCY, 200);  // Resonant frequency for max volume
+        vTaskDelay(pdMS_TO_TICKS(200));
+        gpio_set_level(HEALTH_LED_GPIO, 1);  // OFF
+        gpio_set_level(PENDING_LED_GPIO, 1); // OFF
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    /* Cleanup when cancelled */
+    gpio_set_level(HEALTH_LED_GPIO, 1);
+    gpio_set_level(PENDING_LED_GPIO, 1);
+    ESP_LOGI(TAGZB, "Severe alert cancelled");
+    vTaskDelete(NULL);
+}
+
 // --- Zigbee mesh network callbacks ---
 
 static void mesh_state_change_callback(zb_mesh_state_t old_state, zb_mesh_state_t new_state)
@@ -907,41 +998,53 @@ static void mesh_state_change_callback(zb_mesh_state_t old_state, zb_mesh_state_
     ESP_LOGW(TAGZB, "*** MESH STATE CHANGED: %d -> %d ***", old_state, new_state);
     
     if (new_state == ZB_MESH_STATE_JOINED) {
-        /* Joined network - flash onboard LED and indicate success */
+        /* Joined network - flash STATUS LED and indicate success */
         ESP_LOGW(TAGZB, "==> DEVICE CONNECTED TO NETWORK <==");
         
-        /* Flash onboard LED rapidly to indicate connection (green) */
+        /* Cancel network disconnection alert if it was active */
+        if (network_disconnected_alert_active) {
+            network_disconnected_alert_active = false;
+            ESP_LOGI(TAGZB, "Network reconnected - cancelling disconnect alert");
+        }
+        
+        /* Flash STATUS LED rapidly to indicate connection */
         for (int i = 0; i < 5; i++) {
-            set_onboard_led(0, 50, 0);  // Green ON
+            gpio_set_level(STATUS_LED_GPIO, 0);  // ON
             vTaskDelay(pdMS_TO_TICKS(100));
-            set_onboard_led(0, 0, 0);  // OFF
+            gpio_set_level(STATUS_LED_GPIO, 1);  // OFF
             vTaskDelay(pdMS_TO_TICKS(100));
         }
         
-        /* Keep onboard LED on while connected (solid green) */
-        set_onboard_led(0, 20, 0);
+        /* Keep STATUS LED on while connected (solid) */
+        gpio_set_level(STATUS_LED_GPIO, 0);  // ON
         
-        /* Other indicators */
-        gpio_set_level(LED_GPIO2, 0);
-        buzzer_beep_ms(2000, 200);
-        vTaskDelay(pdMS_TO_TICKS(250));
-        gpio_set_level(LED_GPIO2, 1);
+        /* Stop any blinking that was happening */
+        stop_led_blink();
+        
+        /* Success beep */
+        buzzer_beep_ms(LEDC_FREQUENCY, 200);
         
     } else if (old_state == ZB_MESH_STATE_JOINED && new_state == ZB_MESH_STATE_DISCONNECTED) {
-        /* Lost connection - turn off onboard LED and alert */
+        /* Lost connection - flash ALL LEDs and play buzzer continuously until rejoin */
         ESP_LOGE(TAGZB, "==> DEVICE DISCONNECTED FROM NETWORK <==");
         
-        /* Turn onboard LED red */
-        set_onboard_led(20, 0, 0);
+        /* Activate continuous network disconnection alert */
+        network_disconnected_alert_active = true;
         
-        /* Alert with blinking and beep */
-        start_led_blink(LED_GPIO2, 300, 300);
-        buzzer_beep_ms(2000, 500);
+        /* Spawn task for continuous disconnect alert */
+        xTaskCreate(network_disconnect_alert_task, "disconnect_alert", 2048, NULL, 5, NULL);
+        
+        /* Start blinking STATUS LED */
+        start_led_blink(STATUS_LED_GPIO, 500, 500);
         
     } else if (new_state == ZB_MESH_STATE_FORMING) {
         ESP_LOGI(TAGZB, "Forming network...");
+        /* Flash STATUS LED while forming */
+        start_led_blink(STATUS_LED_GPIO, 200, 200);
     } else if (new_state == ZB_MESH_STATE_JOINING) {
         ESP_LOGI(TAGZB, "Joining network...");
+        /* Flash STATUS LED while joining */
+        start_led_blink(STATUS_LED_GPIO, 200, 200);
     }
 }
 
@@ -950,30 +1053,30 @@ static void mesh_device_event_callback(bool joined, uint16_t device_addr)
     if (joined) {
         ESP_LOGW(TAGZB, "*** NEW DEVICE JOINED NETWORK: 0x%04x ***", device_addr);
         
-        /* Flash onboard LED to indicate new device (blue) */
+        /* Flash HEALTH LED to indicate new device */
         for (int i = 0; i < 3; i++) {
-            set_onboard_led(0, 0, 50);  // Blue ON
+            gpio_set_level(HEALTH_LED_GPIO, 0);  // ON
             vTaskDelay(pdMS_TO_TICKS(150));
-            set_onboard_led(0, 20, 0);  // Back to green
+            gpio_set_level(HEALTH_LED_GPIO, 1);  // OFF
             vTaskDelay(pdMS_TO_TICKS(150));
         }
         
         /* Quick beep */
-        buzzer_beep_ms(2500, 150);
+        buzzer_beep_ms(LEDC_FREQUENCY, 150);
         
     } else {
         ESP_LOGE(TAGZB, "*** DEVICE LEFT NETWORK: 0x%04x ***", device_addr);
         
-        /* Flash onboard LED slowly to indicate device left (red) */
+        /* Flash HEALTH LED slowly to indicate device left */
         for (int i = 0; i < 2; i++) {
-            set_onboard_led(30, 0, 0);  // Red ON
+            gpio_set_level(HEALTH_LED_GPIO, 0);  // ON
             vTaskDelay(pdMS_TO_TICKS(300));
-            set_onboard_led(0, 20, 0);  // Back to green
+            gpio_set_level(HEALTH_LED_GPIO, 1);  // OFF
             vTaskDelay(pdMS_TO_TICKS(300));
         }
         
         /* Warning beep */
-        buzzer_beep_ms(1500, 300);
+        buzzer_beep_ms(LEDC_FREQUENCY, 300);
     }
 }
 
@@ -987,7 +1090,7 @@ static void network_status_received_callback(const canary_network_status_msg_t *
         
         /* Visual alert for remote disconnect */
         gpio_set_level(LED_GPIO1, 0);
-        buzzer_beep_ms(1500, 200);
+        buzzer_beep_ms(LEDC_FREQUENCY, 200);
         vTaskDelay(pdMS_TO_TICKS(250));
         gpio_set_level(LED_GPIO1, 1);
     } else {
@@ -999,29 +1102,144 @@ static void network_status_received_callback(const canary_network_status_msg_t *
 static void impact_alert_received_callback(const canary_impact_alert_msg_t *msg, uint16_t src_addr)
 {
     float magnitude = msg->magnitude / 1000.0f;
-    ESP_LOGW(TAGZB, "IMPACT ALERT from 0x%04x: %s (severity=%s, mag=%.2fg)",
+    ESP_LOGE(TAGZB, "==== RECEIVED IMPACT ALERT ==== SRC=0x%04x TYPE=%s SEVERITY=%s MAG=%.2fg ====",
              src_addr,
              zb_cluster_impact_type_to_string(msg->type),
              zb_cluster_impact_severity_to_string(msg->severity),
              magnitude);
     
-    /* Visual/audio alert for remote impacts */
-    if (msg->severity >= CANARY_IMPACT_MAJOR) {
-        gpio_set_level(LED_GPIO1, 0); // Turn on LED
-        buzzer_beep_ms(3000, 1000);
+    /* Visual/audio alert based on severity - remote alerts are NOT cancellable */
+    if (msg->severity == CANARY_IMPACT_SEVERE) {
+        /* SEVERE: Continuous flash for remote indication (runs in callback, not cancellable) */
+        ESP_LOGE(TAGZB, "REMOTE SEVERE IMPACT from 0x%04x - Showing continuous alert", src_addr);
+        
+        /* Show continuous alert for 10 seconds, then stop automatically */
+        int64_t start_time = esp_timer_get_time();
+        int64_t duration_us = 10000000;  // 10 seconds
+        
+        while ((esp_timer_get_time() - start_time) < duration_us) {
+            gpio_set_level(HEALTH_LED_GPIO, 0);  // ON
+            gpio_set_level(PENDING_LED_GPIO, 0); // ON
+            buzzer_beep_ms(LEDC_FREQUENCY, 200);  // Resonant frequency for max volume
+            vTaskDelay(pdMS_TO_TICKS(200));
+            gpio_set_level(HEALTH_LED_GPIO, 1);  // OFF
+            gpio_set_level(PENDING_LED_GPIO, 1); // OFF
+            vTaskDelay(pdMS_TO_TICKS(200));
+        }
+        gpio_set_level(HEALTH_LED_GPIO, 1);
+        gpio_set_level(PENDING_LED_GPIO, 1);
+        
+    } else if (msg->severity == CANARY_IMPACT_MAJOR) {
+        /* MAJOR: Flash HEALTH LED for 3 seconds with full volume buzzer */
+        int64_t start_time = esp_timer_get_time();
+        int64_t duration_us = 3000000;  // 3 seconds
+        
+        while ((esp_timer_get_time() - start_time) < duration_us) {
+            gpio_set_level(HEALTH_LED_GPIO, 0);  // ON
+            buzzer_beep_ms(LEDC_FREQUENCY, 150);  // Resonant frequency for max volume
+            vTaskDelay(pdMS_TO_TICKS(150));
+            gpio_set_level(HEALTH_LED_GPIO, 1);  // OFF
+            vTaskDelay(pdMS_TO_TICKS(150));
+        }
+        gpio_set_level(HEALTH_LED_GPIO, 1);  // Ensure OFF
     }
 }
 
 static void gas_alert_received_callback(const canary_gas_alert_msg_t *msg, uint16_t src_addr)
 {
-    ESP_LOGW(TAGZB, "GAS ALERT from 0x%04x: detected=%d voltage=%dmV",
+    ESP_LOGE(TAGZB, "==== RECEIVED GAS ALERT ==== SRC=0x%04x DETECTED=%d VOLTAGE=%dmV ====",
              src_addr, msg->detected, msg->voltage_mv);
     
     /* Visual/audio alert for remote gas detection */
     if (msg->detected) {
         gpio_set_level(LED_GPIO2, 0); // Turn on LED
-        buzzer_beep_ms(2500, 1500);
+        buzzer_beep_ms(LEDC_FREQUENCY, 1500);
+        // brief pulse pattern so it's noticeable
+        vTaskDelay(pdMS_TO_TICKS(200));
+        gpio_set_level(LED_GPIO2, 1);
+        vTaskDelay(pdMS_TO_TICKS(200));
+        gpio_set_level(LED_GPIO2, 0);
     }
+}
+
+/* Zigbee core action handler for custom cluster commands */
+static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id, const void *message)
+{
+    esp_err_t ret = ESP_OK;
+    
+    /* Log ALL action handler callbacks to diagnose receive path */
+    ESP_LOGE(TAGZB, "!!!! [ACTION_HANDLER] CALLBACK FIRED - ID: 0x%x !!!!", callback_id);
+    
+    /* Loud banner for any custom cluster traffic */
+    if (callback_id == ESP_ZB_CORE_CMD_CUSTOM_CLUSTER_REQ_CB_ID || 
+        callback_id == ESP_ZB_CORE_CMD_CUSTOM_CLUSTER_RESP_CB_ID) {
+        ESP_LOGE(TAGZB, "================ CUSTOM CLUSTER CALLBACK ================ id=0x%x", callback_id);
+    }
+    
+    switch (callback_id) {
+    case ESP_ZB_CORE_CMD_CUSTOM_CLUSTER_REQ_CB_ID:
+    case ESP_ZB_CORE_CMD_CUSTOM_CLUSTER_RESP_CB_ID:
+        {
+            ESP_LOGE(TAGZB, "[ACTION] CUSTOM CLUSTER COMMAND RECEIVED!");
+            esp_zb_zcl_custom_cluster_command_message_t *msg = (esp_zb_zcl_custom_cluster_command_message_t *)message;
+            if (msg && msg->data.value) {
+                uint16_t src_addr = msg->info.src_address.u.short_addr;
+                ESP_LOGE(TAGZB, "[ACTION] SRC=0x%04x CLUSTER=0x%04x SIZE=%d",
+                         src_addr, msg->info.cluster, msg->data.size);
+                
+                if (msg->info.cluster == ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT) {
+                    canary_impact_alert_msg_t *alert = (canary_impact_alert_msg_t*)msg->data.value;
+                    float mag = alert->magnitude / 1000.0f;
+                    float x = alert->x_axis / 1000.0f;
+                    float y = alert->y_axis / 1000.0f;
+                    float z = alert->z_axis / 1000.0f;
+                    
+                    ESP_LOGE(TAGZB, "==== REMOTE IMPACT ALERT ==== SRC=0x%04x TYPE=%s SEVERITY=%s MAG=%.2fg XYZ=(%.2f,%.2f,%.2f) ====",
+                             src_addr,
+                             zb_cluster_impact_type_to_string((canary_impact_type_t)alert->type),
+                             zb_cluster_impact_severity_to_string((canary_impact_severity_t)alert->severity),
+                             mag, x, y, z);
+                    
+                    /* Invoke the registered callback */
+                    impact_alert_received_callback(alert, src_addr);
+                    
+                    /* Flash HEALTH LED to indicate remote impact */
+                    for (int i = 0; i < 5; i++) {
+                        gpio_set_level(HEALTH_LED_GPIO, 0);
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                        gpio_set_level(HEALTH_LED_GPIO, 1);
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                    }
+                    buzzer_beep_ms(LEDC_FREQUENCY, 300);
+                    
+                } else if (msg->info.cluster == ZB_ZCL_CLUSTER_ID_CANARY_GAS_ALERT) {
+                    canary_gas_alert_msg_t *alert = (canary_gas_alert_msg_t*)msg->data.value;
+                    
+                    ESP_LOGE(TAGZB, "==== REMOTE GAS ALERT ==== SRC=0x%04x DETECTED=%d VOLTAGE=%dmV RAW=%d ====",
+                             src_addr,
+                             alert->detected,
+                             alert->voltage_mv,
+                             alert->raw_value);
+                    
+                    /* Invoke the registered callback */
+                    gas_alert_received_callback(alert, src_addr);
+                    
+                    /* Flash PENDING LED for gas alert */
+                    for (int i = 0; i < 5; i++) {
+                        gpio_set_level(PENDING_LED_GPIO, 0);
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                        gpio_set_level(PENDING_LED_GPIO, 1);
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                    }
+                    buzzer_beep_ms(LEDC_FREQUENCY, 400);
+                }
+            }
+        }
+        break;
+    default:
+        break;
+    }
+    return ret;
 }
 
 static void esp_zb_task(void *pvParameters)
@@ -1065,9 +1283,49 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_on_off_switch_cfg_t switch_cfg = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
     esp_zb_ep_list_t *ep_list = esp_zb_on_off_switch_ep_create(HA_ONOFF_SWITCH_ENDPOINT, &switch_cfg);
     
-    /* TODO: Add custom clusters to endpoint here if needed for attribute reporting */
+    /* Add custom Canary clusters to the endpoint for impact/gas alerts */
+    esp_zb_cluster_list_t *cluster_list = esp_zb_ep_list_get_ep(ep_list, HA_ONOFF_SWITCH_ENDPOINT);
+    if (cluster_list) {
+        /* Create custom clusters with BOTH client (send) and server (receive) roles */
+        
+        /* Impact alerts - client side for sending */
+        esp_zb_attribute_list_t *impact_cluster_client = esp_zb_zcl_attr_list_create(ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT);
+        esp_zb_cluster_list_add_custom_cluster(cluster_list, impact_cluster_client, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+        
+        /* Impact alerts - server side for receiving */
+        esp_zb_attribute_list_t *impact_cluster_server = esp_zb_zcl_attr_list_create(ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT);
+        esp_zb_cluster_list_add_custom_cluster(cluster_list, impact_cluster_server, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+        
+        /* Gas alerts - client side for sending */
+        esp_zb_attribute_list_t *gas_cluster_client = esp_zb_zcl_attr_list_create(ZB_ZCL_CLUSTER_ID_CANARY_GAS_ALERT);
+        esp_zb_cluster_list_add_custom_cluster(cluster_list, gas_cluster_client, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+        
+        /* Gas alerts - server side for receiving */
+        esp_zb_attribute_list_t *gas_cluster_server = esp_zb_zcl_attr_list_create(ZB_ZCL_CLUSTER_ID_CANARY_GAS_ALERT);
+        esp_zb_cluster_list_add_custom_cluster(cluster_list, gas_cluster_server, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+        
+        /* Network status - client side for sending */
+        esp_zb_attribute_list_t *network_cluster_client = esp_zb_zcl_attr_list_create(ZB_ZCL_CLUSTER_ID_CANARY_NETWORK_STATUS);
+        esp_zb_cluster_list_add_custom_cluster(cluster_list, network_cluster_client, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+        
+        /* Network status - server side for receiving */
+        esp_zb_attribute_list_t *network_cluster_server = esp_zb_zcl_attr_list_create(ZB_ZCL_CLUSTER_ID_CANARY_NETWORK_STATUS);
+        esp_zb_cluster_list_add_custom_cluster(cluster_list, network_cluster_server, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+        
+        ESP_LOGE(TAGZB, "!!! CUSTOM CANARY CLUSTERS REGISTERED !!! endpoint=%d, impact=0x%04x, gas=0x%04x",
+                 HA_ONOFF_SWITCH_ENDPOINT, ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT, ZB_ZCL_CLUSTER_ID_CANARY_GAS_ALERT);
+    } else {
+        ESP_LOGE(TAGZB, "Failed to get cluster list for endpoint");
+    }
     
     esp_zb_device_register(ep_list);
+    /* Register core action handler to receive custom cluster commands */
+    esp_zb_core_action_handler_register(zb_action_handler);
+
+    /* Note: esp_zb_zcl_custom_cluster_handlers_update is intended for attribute
+       validation/write callbacks and standard clusters. Our custom clusters
+       use the core action handler path for incoming commands. */
+
     esp_zb_set_primary_network_channel_set(ZB_MESH_PRIMARY_CHANNEL_MASK);
     
     /* Start Zigbee stack */
@@ -1081,6 +1339,18 @@ static void esp_zb_task(void *pvParameters)
 /* Zigbee app signal handler - delegates to mesh network handler */
 void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
 {
+    /* Log ALL incoming signals to diagnose if frames are reaching us */
+    uint32_t *p_sg_p = signal_struct->p_app_signal;
+    esp_err_t err_status = signal_struct->esp_err_status;
+    uint8_t signal_type = *p_sg_p;
+    
+    /* Verbose logging for any signal activity */
+    if (signal_type != ESP_ZB_NWK_SIGNAL_PERMIT_JOIN_STATUS && 
+        signal_type != ESP_ZB_ZDO_SIGNAL_SKIP_STARTUP) {
+        ESP_LOGE(TAGZB, "[SIGNAL_HANDLER] Signal Type: 0x%x, Status: %s", 
+                 signal_type, esp_err_to_name(err_status));
+    }
+    
     /* Forward all signals to mesh network handler */
     zb_mesh_handle_signal(signal_struct);
 }
@@ -1088,19 +1358,39 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
 /* Heartbeat task to show connection status */
 static void button_monitor_task(void *pvParameters)
 {
-    const TickType_t hold_time_ticks = pdMS_TO_TICKS(10000);  // 10 seconds
+    const TickType_t hold_time_ticks = pdMS_TO_TICKS(5000);  // 5 seconds for factory reset
     bool factory_reset_triggered = false;
+    bool short_press_handled = false;
     uint32_t last_debug_tick = 0;
     
     ESP_LOGI(TAGZB, "Button monitor task started - GPIO %d", BUTTON_GPIO);
+    ESP_LOGI(TAGZB, "GPIO23: Single press cancels severe alert, hold 5 sec for factory reset");
+    ESP_LOGI(TAGZB, "GPIO8: Hold 5 sec to clear SPIFFS logs");
     
     while (1) {
-        /* Debug: Print button state every 2 seconds */
+        /* Get button level */
+        uint32_t level = gpio_get_level(BUTTON_GPIO);
         uint32_t now = xTaskGetTickCount();
+        
+        /* Debug: Print button state every 2 seconds */
         if ((now - last_debug_tick) >= pdMS_TO_TICKS(2000)) {
-            uint32_t level = gpio_get_level(BUTTON_GPIO);
-            ESP_LOGI(TAGZB, "[DEBUG] Button GPIO %d level: %lu, pressed: %d", BUTTON_GPIO, level, button_pressed);
+            //ESP_LOGI(TAGZB, "[DEBUG] Button GPIO %d level: %lu, pressed: %d", BUTTON_GPIO, level, button_pressed);
             last_debug_tick = now;
+        }
+        
+        /* Check for button press to cancel severe alert */
+        if (!button_pressed && !short_press_handled) {
+            if (level == 0 && severe_alert_active) {  // Button just pressed and severe alert is active
+                severe_alert_active = false;
+                short_press_handled = true;
+                ESP_LOGW(TAGZB, "GPIO23 button pressed - SEVERE ALERT CANCELLED");
+                vTaskDelay(pdMS_TO_TICKS(500));  // Debounce
+            }
+        }
+        
+        /* Reset short press flag when button is released */
+        if (!button_pressed) {
+            short_press_handled = false;
         }
         
         if (button_pressed && !factory_reset_triggered) {
@@ -1109,17 +1399,21 @@ static void button_monitor_task(void *pvParameters)
             ESP_LOGI(TAGZB, "Button held for %lu ms", (hold_duration * 1000) / configTICK_RATE_HZ);
             
             if (hold_duration >= hold_time_ticks) {
-                /* Button held for 10 seconds - trigger factory reset */
+                /* Button held for 5 seconds - trigger factory reset */
                 factory_reset_triggered = true;
                 
                 ESP_LOGW(TAGZB, "=== FACTORY RESET TRIGGERED ===");
-                ESP_LOGW(TAGZB, "Button held for 10 seconds - erasing Zigbee network config...");
+                ESP_LOGW(TAGZB, "GPIO23 held for 5 seconds - erasing Zigbee network config...");
                 
-                /* Flash LED red rapidly to indicate factory reset */
+                /* Flash all LEDs rapidly to indicate factory reset */
                 for (int i = 0; i < 10; i++) {
-                    set_onboard_led(50, 0, 0);  // Red
+                    gpio_set_level(STATUS_LED_GPIO, 0);  // ON
+                    gpio_set_level(HEALTH_LED_GPIO, 0);  // ON
+                    gpio_set_level(HEARTBEAT_LED_GPIO, 0);  // ON
                     vTaskDelay(pdMS_TO_TICKS(100));
-                    set_onboard_led(0, 0, 0);   // Off
+                    gpio_set_level(STATUS_LED_GPIO, 1);  // OFF
+                    gpio_set_level(HEALTH_LED_GPIO, 1);  // OFF
+                    gpio_set_level(HEARTBEAT_LED_GPIO, 1);  // OFF
                     vTaskDelay(pdMS_TO_TICKS(100));
                 }
                 
@@ -1127,7 +1421,7 @@ static void button_monitor_task(void *pvParameters)
                 zb_mesh_factory_reset();
                 
                 ESP_LOGW(TAGZB, "Factory reset complete! Device will restart...");
-                set_onboard_led(50, 0, 0);  // Solid red before restart
+                gpio_set_level(STATUS_LED_GPIO, 0);  // Keep STATUS LED on before restart
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 
                 /* Restart ESP */
@@ -1145,38 +1439,41 @@ static void button_monitor_task(void *pvParameters)
 static void heartbeat_task(void *pvParameters)
 {
     int pulse_count = 0;
+    int beep_counter = 0;
     while (1) {
         bool is_joined = zb_mesh_is_joined();
         uint16_t short_addr = esp_zb_get_short_address();
         
         if (is_joined && short_addr != 0xFFFF) {
-            /* Connected - pulse onboard LED every 2 seconds */
-            ESP_LOGI(TAGZB, "[HEARTBEAT] Connected to network - Short Addr: 0x%04x", short_addr);
+            /* Connected - blink HEARTBEAT LED every 2 seconds */
+            // ESP_LOGI(TAGZB, "[HEARTBEAT] Connected to network - Short Addr: 0x%04x", short_addr);
             
-            /* Quick pulse to show we're alive */
-            set_onboard_led(0, 50, 0);  // Bright green
+            /* Quick pulse on HEARTBEAT LED to show we're alive */
+            gpio_set_level(HEARTBEAT_LED_GPIO, 0);  // ON
             vTaskDelay(pdMS_TO_TICKS(100));
-            set_onboard_led(0, 20, 0);  // Dim green
+            gpio_set_level(HEARTBEAT_LED_GPIO, 1);  // OFF
             
             pulse_count++;
             if (pulse_count % 5 == 0) {  // Every 10 seconds
-                ESP_LOGW(TAGZB, "========== NETWORK STATUS: CONNECTED (0x%04x) ==========", short_addr);
+                // ESP_LOGW(TAGZB, "========== NETWORK STATUS: CONNECTED (0x%04x) ==========", short_addr);
             }
-        } else {
-            /* Not connected - show searching pattern */
-            ESP_LOGW(TAGZB, "[HEARTBEAT] Not connected - Short Addr: 0x%04x (searching...)", short_addr);
             
-            /* Slow blink to show searching (yellow) */
-            set_onboard_led(30, 15, 0);  // Yellow ON
-            vTaskDelay(pdMS_TO_TICKS(200));
-            set_onboard_led(0, 0, 0);  // OFF
-            vTaskDelay(pdMS_TO_TICKS(800));
+            vTaskDelay(pdMS_TO_TICKS(2000));  // 2 second heartbeat
+            
+        } else {
+            /* Not connected - STATUS LED should be blinking (handled by mesh callback) */
+            /* Sound buzzer periodically to alert disconnection */
+            // ESP_LOGW(TAGZB, "[HEARTBEAT] Not connected - Short Addr: 0x%04x (searching...)", short_addr);
+            
+            beep_counter++;
+            if (beep_counter >= 3) {  // Beep every 3 seconds when disconnected
+                buzzer_beep_ms(2000, 200);
+                beep_counter = 0;
+            }
             
             pulse_count = 0;
-            continue;  // Skip the normal delay
+            vTaskDelay(pdMS_TO_TICKS(1000));  // Check every second when disconnected
         }
-        
-        vTaskDelay(pdMS_TO_TICKS(2000));  // 2 second heartbeat
     }
 }
 
@@ -1266,7 +1563,13 @@ void app_main(void)
 
     init_led(LED_GPIO1);
     init_led(LED_GPIO2);
-    init_onboard_led();  // Initialize onboard RGB LED for ESP32-C6
+    init_led(HEARTBEAT_LED_GPIO);
+    init_led(HEALTH_LED_GPIO);
+    init_led(STATUS_LED_GPIO);
+    init_led(PENDING_LED_GPIO);
+
+    //gpio_set_level(HEALTH_LED_GPIO, 0);  // OFF
+    //gpio_set_level(PENDING_LED_GPIO, 0);  // OFF
     
     // Collect baseline accelerometer values (5 seconds at 100ms intervals)
     collect_baseline(dev_handle_adxl, 5000, 100);
@@ -1274,21 +1577,33 @@ void app_main(void)
     /* H3LIS support disabled: skip h3lis_init(dev_handle_h3lis); */
     buzzer_init();
     
-    ESP_LOGI(TAGZB, "Onboard RGB LED initialized on GPIO %d", LED_ONBOARD_GPIO);
+    ESP_LOGI(TAGZB, "Allocated LEDs initialized: HEARTBEAT=%d, HEALTH=%d, STATUS=%d, PENDING=%d",
+             HEARTBEAT_LED_GPIO, HEALTH_LED_GPIO, STATUS_LED_GPIO, PENDING_LED_GPIO);
 
-    // Configure button input
+    // Configure GPIO 23 button input (severe alert cancel & factory reset)
     gpio_config_t io_conf = {
         .pin_bit_mask = 1ULL << BUTTON_GPIO,
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = 1,   // enable pull-up
         .pull_down_en = 0,
-        .intr_type = GPIO_INTR_NEGEDGE, // falling edge
+        .intr_type = GPIO_INTR_ANYEDGE, // both edges for press/release detection
     };
     gpio_config(&io_conf);
+
+    // Configure GPIO 8 button input (SPIFFS clear)
+    gpio_config_t io_conf_gpio8 = {
+        .pin_bit_mask = 1ULL << SPIFFS_CLEAR_BUTTON_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = 1,   // enable pull-up
+        .pull_down_en = 0,
+        .intr_type = GPIO_INTR_ANYEDGE, // both edges for press/release detection
+    };
+    gpio_config(&io_conf_gpio8);
 
     // Install ISR
     gpio_install_isr_service(0);
     gpio_isr_handler_add(BUTTON_GPIO, button_handler, NULL);
+    gpio_isr_handler_add(SPIFFS_CLEAR_BUTTON_GPIO, spiffs_clear_button_handler, NULL);
 
     // Create major impact timer (10 sec)
     major_impact_timer = xTimerCreate("MajorImpactTimer", pdMS_TO_TICKS(10000), pdFALSE, NULL, major_impact_timer_callback);

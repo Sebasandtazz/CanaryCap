@@ -233,6 +233,13 @@ void zb_mesh_update_state(zb_mesh_state_t new_state);
  */
 void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct);
 
+/**
+ * @brief Get the short address of the last joined device (router)
+ * 
+ * Returns 0xFFFF if none is known.
+ */
+uint16_t zb_mesh_get_last_joined_addr(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -3,9 +3,11 @@
  */
 
 #include "zb_cluster_manager.h"
+#include "zb_mesh_network.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_zigbee_core.h"
+#include "esp_zb_switch.h" /* for HA_ONOFF_SWITCH_ENDPOINT */
 #include "esp_check.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -158,6 +160,11 @@ esp_err_t zb_cluster_send_network_status(canary_network_state_t state)
         return ESP_ERR_INVALID_STATE;
     }
 
+    if (!cluster_mgr_joined && state != CANARY_NETWORK_DISCONNECTED) {
+        ESP_LOGD(TAG, "Not joined to network, skipping network status send");
+        return ESP_ERR_INVALID_STATE;
+    }
+
     canary_network_status_msg_t msg;
     msg.state = state;
     msg.short_addr = esp_zb_get_short_address();
@@ -168,14 +175,22 @@ esp_err_t zb_cluster_send_network_status(canary_network_state_t state)
     msg.pan_id_low = pan_id & 0xFF;
     msg.channel = esp_zb_get_current_channel();
 
-    /* Build ZCL command for broadcast */
+    /* Build ZCL command with proper addressing */
     esp_zb_zcl_custom_cluster_cmd_req_t cmd_req;
     memset(&cmd_req, 0, sizeof(cmd_req));
     
-    cmd_req.zcl_basic_cmd.src_endpoint = CANARY_ENDPOINT;
-    cmd_req.zcl_basic_cmd.dst_endpoint = CANARY_ENDPOINT;
-    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_GROUP_ENDP_NOT_PRESENT;
-    cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0xFFFF; // Broadcast
+    cmd_req.zcl_basic_cmd.src_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
+    cmd_req.zcl_basic_cmd.dst_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
+    
+    /* Try unicast to coordinator first if we're a router */
+    if (!is_coordinator_role) {
+        cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
+        cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0x0000; // Coordinator
+    } else {
+        /* Coordinator broadcasts to all */
+        cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_GROUP_ENDP_NOT_PRESENT;
+        cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0xFFFF; // Broadcast
+    }
     
     cmd_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_NETWORK_STATUS;
     cmd_req.custom_cmd_id = ZB_ZCL_CMD_NETWORK_STATUS_REPORT_ID;
@@ -184,17 +199,21 @@ esp_err_t zb_cluster_send_network_status(canary_network_state_t state)
     cmd_req.data.value = &msg;
     cmd_req.data.size = sizeof(msg);
 
+    /* Small delay to prevent buffer exhaustion */
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
     esp_zb_lock_acquire(portMAX_DELAY);
-    esp_err_t err = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+    uint8_t seq = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
     esp_zb_lock_release();
 
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Network status sent: %s", zb_cluster_network_state_to_string(state));
+    if (seq != 0) {
+        ESP_LOGI(TAG, "Network status sent: %s (seq=%d)", 
+                 zb_cluster_network_state_to_string(state), seq);
+        return ESP_OK;
     } else {
-        ESP_LOGW(TAG, "Failed to send network status: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to send network status (seq=0)");
+        return ESP_FAIL;
     }
-
-    return err;
 }
 
 esp_err_t zb_cluster_register_network_status_callback(zb_network_status_callback_t callback)
@@ -225,6 +244,13 @@ esp_err_t zb_cluster_send_impact_alert(
         return ESP_ERR_INVALID_STATE;
     }
 
+    uint16_t short_addr = esp_zb_get_short_address();
+    if (!cluster_mgr_joined || short_addr == 0xFFFF || short_addr == 0xFFFE) {
+        ESP_LOGW(TAG, "Not ready to send impact alert (joined=%d, addr=0x%04x)", 
+                 cluster_mgr_joined, short_addr);
+        return ESP_ERR_INVALID_STATE;
+    }
+
     /* Debouncing: prevent spam */
     static int64_t last_impact_time = 0;
     int64_t now = esp_timer_get_time();
@@ -233,6 +259,11 @@ esp_err_t zb_cluster_send_impact_alert(
         return ESP_OK;
     }
     last_impact_time = now;
+    
+    ESP_LOGI(TAG, "Preparing to send impact alert: %s (severity=%s, mag=%.2fg)",
+             zb_cluster_impact_type_to_string(type),
+             zb_cluster_impact_severity_to_string(severity),
+             magnitude);
 
     canary_impact_alert_msg_t msg;
     msg.severity = severity;
@@ -244,36 +275,61 @@ esp_err_t zb_cluster_send_impact_alert(
     msg.timestamp = get_timestamp_ms();
     msg.source_addr = esp_zb_get_short_address();
 
-    /* Build ZCL command for broadcast */
+    /* Log locally first */
+    ESP_LOGW(TAG, "*** IMPACT ALERT (LOCAL) *** %s | severity=%s | mag=%.2fg | x=%.2fg y=%.2fg z=%.2fg | src=0x%04x",
+             zb_cluster_impact_type_to_string(type),
+             zb_cluster_impact_severity_to_string(severity),
+             magnitude, x_g, y_g, z_g,
+             esp_zb_get_short_address());
+    
+    /* Build and send ZCL command directly to coordinator */
     esp_zb_zcl_custom_cluster_cmd_req_t cmd_req;
     memset(&cmd_req, 0, sizeof(cmd_req));
     
-    cmd_req.zcl_basic_cmd.src_endpoint = CANARY_ENDPOINT;
-    cmd_req.zcl_basic_cmd.dst_endpoint = CANARY_ENDPOINT;
-    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_GROUP_ENDP_NOT_PRESENT;
-    cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0xFFFF; // Broadcast
+    /* Use the same endpoint where custom clusters are registered (HA endpoint) */
+    cmd_req.zcl_basic_cmd.src_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
+    cmd_req.zcl_basic_cmd.dst_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
+    /* Use endpoint-present mode for all sends; broadcast with 0xFFFF */
+    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
+    cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0xFFFF; // Broadcast to all devices
+    cmd_req.profile_id = ESP_ZB_AF_HA_PROFILE_ID;
     
     cmd_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT;
     cmd_req.custom_cmd_id = ZB_ZCL_CMD_IMPACT_ALERT_REPORT_ID;
     cmd_req.direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV;
     cmd_req.data.type = ESP_ZB_ZCL_ATTR_TYPE_ARRAY;
-    cmd_req.data.value = &msg;
+    cmd_req.data.value = (void *)&msg;
     cmd_req.data.size = sizeof(msg);
-
+    
     esp_zb_lock_acquire(portMAX_DELAY);
-    esp_err_t err = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+    uint8_t seq_broadcast = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
     esp_zb_lock_release();
 
-    if (err == ESP_OK) {
-        ESP_LOGW(TAG, "Impact alert sent: %s (severity=%s, mag=%.2fg)",
-                 zb_cluster_impact_type_to_string(type),
-                 zb_cluster_impact_severity_to_string(severity),
-                 magnitude);
-    } else {
-        ESP_LOGW(TAG, "Failed to send impact alert: %s", esp_err_to_name(err));
+    /* Also unicast to coordinator to guarantee reception */
+    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
+    cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0x0000;
+    esp_zb_lock_acquire(portMAX_DELAY);
+    uint8_t seq_unicast = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+    esp_zb_lock_release();
+
+    /* Also unicast to last joined router (if known and not coordinator) */
+    uint16_t last = zb_mesh_get_last_joined_addr();
+    if (last != 0xFFFF && last != 0x0000) {
+        cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
+        cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = last;
+        esp_zb_lock_acquire(portMAX_DELAY);
+        uint8_t seq_router = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+        esp_zb_lock_release();
+        ESP_LOGI(TAG, "Impact alert unicast to last router 0x%04x (seq=%d)", last, seq_router);
     }
 
-    return err;
+    if (seq_broadcast != 0 || seq_unicast != 0) {
+        ESP_LOGI(TAG, "Impact alert sent (broadcast seq=%d, unicast seq=%d)", seq_broadcast, seq_unicast);
+        return ESP_OK;
+    } else {
+        ESP_LOGE(TAG, "Failed to send impact alert (no valid seq)");
+        return ESP_FAIL;
+    }
 }
 
 esp_err_t zb_cluster_register_impact_alert_callback(zb_impact_alert_callback_t callback)
@@ -301,6 +357,11 @@ esp_err_t zb_cluster_send_gas_alert(
         return ESP_ERR_INVALID_STATE;
     }
 
+    if (!cluster_mgr_joined) {
+        ESP_LOGW(TAG, "Not joined to network, cannot send gas alert");
+        return ESP_ERR_INVALID_STATE;
+    }
+
     /* Debouncing: prevent spam */
     static int64_t last_gas_time = 0;
     int64_t now = esp_timer_get_time();
@@ -317,33 +378,58 @@ esp_err_t zb_cluster_send_gas_alert(
     msg.timestamp = get_timestamp_ms();
     msg.source_addr = esp_zb_get_short_address();
 
-    /* Build ZCL command for broadcast */
+    /* Log locally first */
+    ESP_LOGW(TAG, "*** GAS ALERT (LOCAL) *** detected=%d | voltage=%dmV | raw=%d | src=0x%04x",
+             detected, voltage_mv, raw_value,
+             esp_zb_get_short_address());
+    
+    /* Build and send ZCL command directly to coordinator */
     esp_zb_zcl_custom_cluster_cmd_req_t cmd_req;
     memset(&cmd_req, 0, sizeof(cmd_req));
     
-    cmd_req.zcl_basic_cmd.src_endpoint = CANARY_ENDPOINT;
-    cmd_req.zcl_basic_cmd.dst_endpoint = CANARY_ENDPOINT;
-    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_GROUP_ENDP_NOT_PRESENT;
+    cmd_req.zcl_basic_cmd.src_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
+    cmd_req.zcl_basic_cmd.dst_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
+    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
     cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0xFFFF; // Broadcast
+    cmd_req.profile_id = ESP_ZB_AF_HA_PROFILE_ID;
     
+    cmd_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_NETWORK_STATUS;
     cmd_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_GAS_ALERT;
     cmd_req.custom_cmd_id = ZB_ZCL_CMD_GAS_ALERT_REPORT_ID;
     cmd_req.direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV;
     cmd_req.data.type = ESP_ZB_ZCL_ATTR_TYPE_ARRAY;
-    cmd_req.data.value = &msg;
+    cmd_req.data.value = (void *)&msg;
     cmd_req.data.size = sizeof(msg);
-
+    
     esp_zb_lock_acquire(portMAX_DELAY);
-    esp_err_t err = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+    uint8_t seq_broadcast = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
     esp_zb_lock_release();
 
-    if (err == ESP_OK) {
-        ESP_LOGW(TAG, "Gas alert sent: detected=%d voltage=%dmV", detected, voltage_mv);
-    } else {
-        ESP_LOGW(TAG, "Failed to send gas alert: %s", esp_err_to_name(err));
+    /* Also unicast to coordinator to guarantee reception */
+    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
+    cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0x0000;
+    esp_zb_lock_acquire(portMAX_DELAY);
+    uint8_t seq_unicast = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+    esp_zb_lock_release();
+
+    /* Also unicast to last joined router (if known and not coordinator) */
+    uint16_t last = zb_mesh_get_last_joined_addr();
+    if (last != 0xFFFF && last != 0x0000) {
+        cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
+        cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = last;
+        esp_zb_lock_acquire(portMAX_DELAY);
+        uint8_t seq_router = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+        esp_zb_lock_release();
+        ESP_LOGI(TAG, "Gas alert unicast to last router 0x%04x (seq=%d)", last, seq_router);
     }
 
-    return err;
+    if (seq_broadcast != 0 || seq_unicast != 0) {
+        ESP_LOGI(TAG, "Gas alert sent (broadcast seq=%d, unicast seq=%d)", seq_broadcast, seq_unicast);
+        return ESP_OK;
+    } else {
+        ESP_LOGE(TAG, "Failed to send gas alert (no valid seq)");
+        return ESP_FAIL;
+    }
 }
 
 esp_err_t zb_cluster_register_gas_alert_callback(zb_gas_alert_callback_t callback)
