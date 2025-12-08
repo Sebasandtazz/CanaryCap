@@ -4,6 +4,7 @@
 
 #include "zb_cluster_manager.h"
 #include "zb_mesh_network.h"
+#include "zb_device_registry.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_zigbee_core.h"
@@ -282,18 +283,21 @@ esp_err_t zb_cluster_send_impact_alert(
              magnitude, x_g, y_g, z_g,
              esp_zb_get_short_address());
     
-    /* Build and send ZCL command directly to coordinator */
+    /* Get discovered devices from registry */
+    zb_device_info_t devices[ZB_REGISTRY_MAX_DEVICES];
+    uint8_t device_count = 0;
+    zb_registry_get_devices(devices, ZB_REGISTRY_MAX_DEVICES, &device_count);
+    
+    ESP_LOGI(TAG, "Sending impact alert to %d discovered devices + coordinator", device_count);
+    
+    /* Build ZCL command */
     esp_zb_zcl_custom_cluster_cmd_req_t cmd_req;
     memset(&cmd_req, 0, sizeof(cmd_req));
     
-    /* Use the same endpoint where custom clusters are registered (HA endpoint) */
     cmd_req.zcl_basic_cmd.src_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
     cmd_req.zcl_basic_cmd.dst_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
-    /* Use endpoint-present mode for all sends; broadcast with 0xFFFF */
     cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
-    cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0xFFFF; // Broadcast to all devices
     cmd_req.profile_id = ESP_ZB_AF_HA_PROFILE_ID;
-    
     cmd_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT;
     cmd_req.custom_cmd_id = ZB_ZCL_CMD_IMPACT_ALERT_REPORT_ID;
     cmd_req.direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV;
@@ -301,33 +305,51 @@ esp_err_t zb_cluster_send_impact_alert(
     cmd_req.data.value = (void *)&msg;
     cmd_req.data.size = sizeof(msg);
     
-    esp_zb_lock_acquire(portMAX_DELAY);
-    uint8_t seq_broadcast = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
-    esp_zb_lock_release();
-
-    /* Also unicast to coordinator to guarantee reception */
-    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
+    int success_count = 0;
+    
+    /* Send to coordinator (always) */
     cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0x0000;
     esp_zb_lock_acquire(portMAX_DELAY);
-    uint8_t seq_unicast = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+    uint8_t seq = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
     esp_zb_lock_release();
-
-    /* Also unicast to last joined router (if known and not coordinator) */
-    uint16_t last = zb_mesh_get_last_joined_addr();
-    if (last != 0xFFFF && last != 0x0000) {
-        cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
-        cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = last;
+    if (seq != 0) {
+        ESP_LOGI(TAG, "Impact alert sent to coordinator 0x0000, seq=%d", seq);
+        success_count++;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));  // Increased delay
+    
+    /* Send to each discovered device (unicast) */
+    for (int i = 0; i < device_count; i++) {
+        if (devices[i].short_addr == esp_zb_get_short_address()) {
+            continue;  // Don't send to ourselves
+        }
+        
+        if (!devices[i].has_impact_cluster) {
+            continue;  // Skip if device doesn't support impact cluster
+        }
+        
+        cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = devices[i].short_addr;
+        cmd_req.zcl_basic_cmd.dst_endpoint = devices[i].endpoint;
+        
         esp_zb_lock_acquire(portMAX_DELAY);
-        uint8_t seq_router = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+        seq = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
         esp_zb_lock_release();
-        ESP_LOGI(TAG, "Impact alert unicast to last router 0x%04x (seq=%d)", last, seq_router);
+        
+        if (seq != 0) {
+            ESP_LOGI(TAG, "Impact alert sent to router 0x%04x, seq=%d", devices[i].short_addr, seq);
+            success_count++;
+        } else {
+            ESP_LOGW(TAG, "Failed to send impact alert to router 0x%04x", devices[i].short_addr);
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(100));  // Increased delay to prevent buffer exhaustion
     }
 
-    if (seq_broadcast != 0 || seq_unicast != 0) {
-        ESP_LOGI(TAG, "Impact alert sent (broadcast seq=%d, unicast seq=%d)", seq_broadcast, seq_unicast);
+    if (success_count > 0) {
+        ESP_LOGI(TAG, "Impact alert sent to %d devices", success_count);
         return ESP_OK;
     } else {
-        ESP_LOGE(TAG, "Failed to send impact alert (no valid seq)");
+        ESP_LOGE(TAG, "Failed to send impact alert to any device");
         return ESP_FAIL;
     }
 }
@@ -383,17 +405,21 @@ esp_err_t zb_cluster_send_gas_alert(
              detected, voltage_mv, raw_value,
              esp_zb_get_short_address());
     
-    /* Build and send ZCL command directly to coordinator */
+    /* Get discovered devices from registry */
+    zb_device_info_t devices[ZB_REGISTRY_MAX_DEVICES];
+    uint8_t device_count = 0;
+    zb_registry_get_devices(devices, ZB_REGISTRY_MAX_DEVICES, &device_count);
+    
+    ESP_LOGI(TAG, "Sending gas alert to %d discovered devices + coordinator", device_count);
+    
+    /* Build ZCL command */
     esp_zb_zcl_custom_cluster_cmd_req_t cmd_req;
     memset(&cmd_req, 0, sizeof(cmd_req));
     
     cmd_req.zcl_basic_cmd.src_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
     cmd_req.zcl_basic_cmd.dst_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
     cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
-    cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0xFFFF; // Broadcast
     cmd_req.profile_id = ESP_ZB_AF_HA_PROFILE_ID;
-    
-    cmd_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_NETWORK_STATUS;
     cmd_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_GAS_ALERT;
     cmd_req.custom_cmd_id = ZB_ZCL_CMD_GAS_ALERT_REPORT_ID;
     cmd_req.direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV;
@@ -401,33 +427,51 @@ esp_err_t zb_cluster_send_gas_alert(
     cmd_req.data.value = (void *)&msg;
     cmd_req.data.size = sizeof(msg);
     
-    esp_zb_lock_acquire(portMAX_DELAY);
-    uint8_t seq_broadcast = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
-    esp_zb_lock_release();
-
-    /* Also unicast to coordinator to guarantee reception */
-    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
+    int success_count = 0;
+    
+    /* Send to coordinator (always) */
     cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0x0000;
     esp_zb_lock_acquire(portMAX_DELAY);
-    uint8_t seq_unicast = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+    uint8_t seq = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
     esp_zb_lock_release();
-
-    /* Also unicast to last joined router (if known and not coordinator) */
-    uint16_t last = zb_mesh_get_last_joined_addr();
-    if (last != 0xFFFF && last != 0x0000) {
-        cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
-        cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = last;
+    if (seq != 0) {
+        ESP_LOGI(TAG, "Gas alert sent to coordinator 0x0000, seq=%d", seq);
+        success_count++;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));  // Increased delay
+    
+    /* Send to each discovered device (unicast) */
+    for (int i = 0; i < device_count; i++) {
+        if (devices[i].short_addr == esp_zb_get_short_address()) {
+            continue;  // Don't send to ourselves
+        }
+        
+        if (!devices[i].has_gas_cluster) {
+            continue;  // Skip if device doesn't support gas cluster
+        }
+        
+        cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = devices[i].short_addr;
+        cmd_req.zcl_basic_cmd.dst_endpoint = devices[i].endpoint;
+        
         esp_zb_lock_acquire(portMAX_DELAY);
-        uint8_t seq_router = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+        seq = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
         esp_zb_lock_release();
-        ESP_LOGI(TAG, "Gas alert unicast to last router 0x%04x (seq=%d)", last, seq_router);
+        
+        if (seq != 0) {
+            ESP_LOGI(TAG, "Gas alert sent to router 0x%04x, seq=%d", devices[i].short_addr, seq);
+            success_count++;
+        } else {
+            ESP_LOGW(TAG, "Failed to send gas alert to router 0x%04x", devices[i].short_addr);
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(100));  // Increased delay to prevent buffer exhaustion
     }
 
-    if (seq_broadcast != 0 || seq_unicast != 0) {
-        ESP_LOGI(TAG, "Gas alert sent (broadcast seq=%d, unicast seq=%d)", seq_broadcast, seq_unicast);
+    if (success_count > 0) {
+        ESP_LOGI(TAG, "Gas alert sent to %d devices", success_count);
         return ESP_OK;
     } else {
-        ESP_LOGE(TAG, "Failed to send gas alert (no valid seq)");
+        ESP_LOGE(TAG, "Failed to send gas alert to any device");
         return ESP_FAIL;
     }
 }

@@ -4,6 +4,7 @@
 
 #include "zb_mesh_network.h"
 #include "zb_cluster_manager.h"
+#include "zb_device_registry.h"
 #include "esp_log.h"
 #include "esp_check.h"
 #include "esp_zigbee_core.h"
@@ -26,6 +27,8 @@ static SemaphoreHandle_t mesh_mutex = NULL;
 static zb_mesh_state_change_cb_t state_change_cb = NULL;
 static zb_mesh_device_event_cb_t device_event_cb = NULL;
 static uint16_t s_last_joined_addr = 0xFFFF;
+
+/* No periodic task needed - broadcasts work immediately with proper configuration */
 
 uint16_t zb_mesh_get_last_joined_addr(void)
 {
@@ -334,8 +337,9 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
                 ESP_LOGI(TAG, "Rejoining existing network");
                 zb_mesh_update_state(ZB_MESH_STATE_REJOINING);
                 if (device_role == ZB_MESH_ROLE_COORDINATOR) {
-                    /* Coordinator opens network after forming */
-                    zb_mesh_open_network(ZB_MESH_PERMIT_JOIN_DURATION);
+                    /* Coordinator needs to start steering to become discoverable again */
+                    ESP_LOGI(TAG, "Coordinator starting steering after reboot");
+                    esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
                 }
             }
         } else {
@@ -373,9 +377,32 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
             ESP_LOGI(TAG, "Network steering completed");
             zb_mesh_update_state(ZB_MESH_STATE_JOINED);
             
+            /* Coordinator should reopen network for joins after steering */
+            if (device_role == ZB_MESH_ROLE_COORDINATOR) {
+                ESP_LOGI(TAG, "Coordinator opening network for joins (duration=%d sec)", ZB_MESH_PERMIT_JOIN_DURATION);
+                zb_mesh_open_network(ZB_MESH_PERMIT_JOIN_DURATION);
+            }
+            
+            /* Routers should also open their network to act as routers */
+            if (device_role == ZB_MESH_ROLE_ROUTER) {
+                ESP_LOGI(TAG, "Router opening network to enable routing functionality");
+                /* Open network on router to allow it to route messages */
+                zb_mesh_open_network(ZB_MESH_PERMIT_JOIN_DURATION);
+                
+                /* Wait longer for network to fully stabilize before announcing */
+                vTaskDelay(pdMS_TO_TICKS(3000));
+                ESP_LOGI(TAG, "Router announcing presence to network");
+                zb_cluster_send_network_status(CANARY_NETWORK_CONNECTED);
+            }
+            
             /* Delay before sending network status to allow stack to stabilize */
             vTaskDelay(pdMS_TO_TICKS(1000));
             zb_cluster_send_network_status(CANARY_NETWORK_CONNECTED);
+            
+            /* Start device discovery to find other routers/coordinator */
+            ESP_LOGI(TAG, "Starting device discovery...");
+            vTaskDelay(pdMS_TO_TICKS(5000));  // Wait longer for network to fully settle and buffers to clear
+            zb_registry_start_discovery();
             
             zb_mesh_print_network_info();
         } else {
@@ -389,8 +416,34 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
             esp_zb_zdo_signal_device_annce_params_t *dev_annce_params = 
                 (esp_zb_zdo_signal_device_annce_params_t *)esp_zb_app_signal_get_params(p_sg_p);
             
-            ESP_LOGI(TAG, "New device announced: 0x%04x", dev_annce_params->device_short_addr);
+            ESP_LOGE(TAG, "*** DEVICE ANNOUNCED: 0x%04x (IEEE: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x) ***",
+                     dev_annce_params->device_short_addr,
+                     dev_annce_params->ieee_addr[7], dev_annce_params->ieee_addr[6],
+                     dev_annce_params->ieee_addr[5], dev_annce_params->ieee_addr[4],
+                     dev_annce_params->ieee_addr[3], dev_annce_params->ieee_addr[2],
+                     dev_annce_params->ieee_addr[1], dev_annce_params->ieee_addr[0]);
+            
             s_last_joined_addr = dev_annce_params->device_short_addr;
+            
+            /* Re-open network to allow more devices to join */
+            if (device_role == ZB_MESH_ROLE_COORDINATOR) {
+                ESP_LOGI(TAG, "Reopening network for additional joins");
+                zb_mesh_open_network(ZB_MESH_PERMIT_JOIN_DURATION);
+            }
+            
+            /* When a new device joins, re-run discovery to add it to registry */
+            if (dev_annce_params->device_short_addr != esp_zb_get_short_address()) {
+                ESP_LOGI(TAG, "Device 0x%04x announced - will rediscover network devices", 
+                         dev_annce_params->device_short_addr);
+                
+                /* Wait for new device to fully stabilize and complete its own discovery */
+                vTaskDelay(pdMS_TO_TICKS(8000));
+                
+                /* Re-run discovery to find the newly joined device */
+                ESP_LOGI(TAG, "Re-running device discovery to find new device 0x%04x", 
+                         dev_annce_params->device_short_addr);
+                zb_registry_start_discovery();
+            }
             
             if (device_event_cb) {
                 device_event_cb(true, dev_annce_params->device_short_addr);

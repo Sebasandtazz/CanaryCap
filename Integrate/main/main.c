@@ -25,6 +25,7 @@
 #include "zb_cluster_manager.h"
 #include "zb_mesh_network.h"
 #include "zb_canary_cluster.h"
+#include "zb_device_registry.h"
 #include "driver/i2c_master.h"
 #include "driver/gpio.h"
 #include "math.h"
@@ -135,7 +136,7 @@ static bool button_held = false;
 #define LEDC_CHANNEL            LEDC_CHANNEL_0
 #define LEDC_DUTY_RES           LEDC_TIMER_13_BIT // Set duty resolution to 13 bits
 #define LEDC_DUTY               (4096) // Set duty to 50%. (2 ** 13) * 50% = 4096
-#define LEDC_FREQUENCY          (2700) // Resonant frequency - try 2700Hz for max volume
+#define LEDC_FREQUENCY          (4000) // Resonant frequency
 
 //Def for ADC
 #define EXAMPLE_ADC_UNIT                    ADC_UNIT_1
@@ -909,11 +910,11 @@ void adc_task(void *param)
                         }
                         
                         if(i % 32 == 0) { // Log every 32nd valid sample
-                        // ESP_LOGI(TAGADC, "ADC%d Ch%d raw=%"PRIu32" mV=%"PRIu32,
-                        //         parsed_data[i].unit + 1,
-                        //         parsed_data[i].channel,
-                        //         raw,
-                        //         voltage_mv);
+                        ESP_LOGI(TAGADC, "ADC%d Ch%d raw=%"PRIu32" mV=%"PRIu32,
+                                parsed_data[i].unit + 1,
+                                parsed_data[i].channel,
+                                raw,
+                                voltage_mv);
                             } 
                         }
                         else {
@@ -1254,6 +1255,9 @@ static void esp_zb_task(void *pvParameters)
     /* Initialize mesh network */
     ESP_ERROR_CHECK(zb_mesh_init(role));
     
+    /* Initialize device registry */
+    ESP_ERROR_CHECK(zb_registry_init());
+    
     /* Initialize cluster manager */
     ESP_ERROR_CHECK(zb_cluster_manager_init(role == ZB_MESH_ROLE_COORDINATOR));
     
@@ -1264,15 +1268,21 @@ static void esp_zb_task(void *pvParameters)
     zb_cluster_register_impact_alert_callback(impact_alert_received_callback);
     zb_cluster_register_gas_alert_callback(gas_alert_received_callback);
 
+    /* Set overall network size to support multiple routers (must be called before esp_zb_init) */
+    esp_zb_overall_network_size_set(20);  /* Support up to 20 devices in network */
+    ESP_LOGI(TAGZB, "Network size set to 20 devices (routers + end devices)");
+    
     /* Configure Zigbee stack */
     esp_zb_cfg_t zb_nwk_cfg = {
         .esp_zb_role = (role == ZB_MESH_ROLE_COORDINATOR) ? 
                        ESP_ZB_DEVICE_TYPE_COORDINATOR : ESP_ZB_DEVICE_TYPE_ROUTER,
         .install_code_policy = false,
         .nwk_cfg.zczr_cfg = {
-            .max_children = ZB_MESH_MAX_CHILDREN,
+            .max_children = ZB_MESH_MAX_CHILDREN,  /* Max children per router/coordinator */
         },
     };
+    
+    ESP_LOGI(TAGZB, "Network config: max_children=%d", ZB_MESH_MAX_CHILDREN);
 
     ESP_LOGI(TAGZB, "Starting Zigbee mesh, role=%s", 
              (role == ZB_MESH_ROLE_COORDINATOR) ? "COORDINATOR" : "ROUTER");
@@ -1319,6 +1329,11 @@ static void esp_zb_task(void *pvParameters)
     }
     
     esp_zb_device_register(ep_list);
+    
+    /* CRITICAL: Enable RxOnWhenIdle for routers to receive broadcasts */
+    esp_zb_set_rx_on_when_idle(true);
+    ESP_LOGI(TAGZB, "RxOnWhenIdle enabled - device will listen for broadcasts");
+    
     /* Register core action handler to receive custom cluster commands */
     esp_zb_core_action_handler_register(zb_action_handler);
 
@@ -1614,14 +1629,13 @@ void app_main(void)
     // Create I2C task for accelerometer monitoring
     xTaskCreate(i2c_task, "i2c_task", 4096, dev_handle_adxl, 5, &i2c_task_handle);
 
-    /* ADC and I2C tasks enabled */
+    //COMMENTED OUT - ADC initialization (no gas sensor monitoring locally)
+    //ADC and I2C tasks enabled
     adc_continuous_handle_t handle = NULL;
     continuous_adc_init(channel, sizeof(channel) / sizeof(adc_channel_t), &handle);
 
-    /* Create the ADC task and store its handle before registering callbacks
-       or starting the ADC. This prevents the ADC ISR from attempting to
-       notify a NULL task handle if conversions occur immediately. */
     xTaskCreate(adc_task, "adc_task", 4096, handle, 5, &adc_task_handle);
+
     s_task_handle = adc_task_handle;
 
     adc_continuous_evt_cbs_t cbs = {
@@ -1631,6 +1645,15 @@ void app_main(void)
     ESP_ERROR_CHECK(adc_continuous_start(handle));
     
     ESP_LOGI(TAGZB, "ADC and I2C tasks enabled");
+    
+
+    ESP_LOGW(TAGZB, "============================================================");
+    ESP_LOGW(TAGZB, "  ZIGBEE MESH NODE - Impact sensor enabled");
+    ESP_LOGW(TAGZB, "  This device will:");
+    ESP_LOGW(TAGZB, "    - Monitor accelerometer for impacts (ADXL345)");
+    ESP_LOGW(TAGZB, "    - Send impact alerts over Zigbee mesh");
+    ESP_LOGW(TAGZB, "    - Receive remote alerts from other nodes");
+    ESP_LOGW(TAGZB, "============================================================");
 
     /* Configure Zigbee platform (radio/host) before starting the Zigbee task */
     {
