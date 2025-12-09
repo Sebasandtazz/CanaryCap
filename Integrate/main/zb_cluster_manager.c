@@ -28,6 +28,7 @@ static bool is_coordinator_role = false;
 static zb_network_status_callback_t network_status_cb = NULL;
 static zb_impact_alert_callback_t impact_alert_cb = NULL;
 static zb_gas_alert_callback_t gas_alert_cb = NULL;
+static zb_heartbeat_callback_t heartbeat_cb = NULL;
 
 /* Mutex for thread-safe access */
 static SemaphoreHandle_t cluster_mutex = NULL;
@@ -55,6 +56,13 @@ static struct {
     uint16_t raw_value;
     uint32_t timestamp;
 } gas_alert_attrs;
+
+static struct {
+    uint32_t seq_num;
+    uint32_t uptime_sec;
+    uint32_t timestamp;
+    uint8_t battery_level;
+} heartbeat_attrs;
 
 /* ============================================================================
  * Utility Functions
@@ -482,6 +490,74 @@ esp_err_t zb_cluster_register_gas_alert_callback(zb_gas_alert_callback_t callbac
         gas_alert_cb = callback;
         xSemaphoreGive(cluster_mutex);
         ESP_LOGI(TAG, "Gas alert callback registered");
+        return ESP_OK;
+    }
+    return ESP_ERR_TIMEOUT;
+}
+
+/* ============================================================================
+ * Heartbeat Messages
+ * ============================================================================ */
+
+esp_err_t zb_cluster_send_heartbeat(uint32_t seq_num, uint32_t uptime_sec, uint8_t battery_level)
+{
+    if (!cluster_mgr_initialized) {
+        ESP_LOGE(TAG, "Cluster manager not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (!cluster_mgr_joined) {
+        ESP_LOGD(TAG, "Not joined to network, skipping heartbeat send");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    canary_heartbeat_msg_t msg;
+    msg.seq_num = seq_num;
+    msg.uptime_sec = uptime_sec;
+    msg.timestamp = get_timestamp_ms();
+    msg.source_addr = esp_zb_get_short_address();
+    msg.battery_level = battery_level;
+    
+    /* Update local attributes */
+    heartbeat_attrs.seq_num = msg.seq_num;
+    heartbeat_attrs.uptime_sec = msg.uptime_sec;
+    heartbeat_attrs.timestamp = msg.timestamp;
+    heartbeat_attrs.battery_level = msg.battery_level;
+    
+    /* Prepare custom cluster command request */
+    esp_zb_zcl_custom_cluster_cmd_req_t cmd_req = {0};
+    cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0x0000;  // Send to coordinator
+    cmd_req.zcl_basic_cmd.dst_endpoint = CANARY_ENDPOINT;
+    cmd_req.zcl_basic_cmd.src_endpoint = CANARY_ENDPOINT;
+    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
+    cmd_req.profile_id = ESP_ZB_AF_HA_PROFILE_ID;
+    cmd_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_HEARTBEAT;
+    cmd_req.custom_cmd_id = ZB_ZCL_CMD_HEARTBEAT_PING_ID;
+    cmd_req.direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV;
+    cmd_req.data.type = ESP_ZB_ZCL_ATTR_TYPE_ARRAY;
+    cmd_req.data.value = (void *)&msg;
+    cmd_req.data.size = sizeof(msg);
+    
+    esp_zb_lock_acquire(portMAX_DELAY);
+    uint8_t seq = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+    esp_zb_lock_release();
+    
+    if (seq != 0) {
+        ESP_LOGD(TAG, "Heartbeat sent: seq=%u, uptime=%lu, battery=%u%%", 
+                 seq_num, uptime_sec, battery_level);
+        return ESP_OK;
+    } else {
+        ESP_LOGW(TAG, "Failed to send heartbeat (seq=0)");
+        return ESP_FAIL;
+    }
+}
+
+esp_err_t zb_cluster_register_heartbeat_callback(zb_heartbeat_callback_t callback)
+{
+    if (xSemaphoreTake(cluster_mutex, portMAX_DELAY) == pdTRUE) {
+        heartbeat_cb = callback;
+        xSemaphoreGive(cluster_mutex);
+        ESP_LOGI(TAG, "Heartbeat callback registered");
         return ESP_OK;
     }
     return ESP_ERR_TIMEOUT;

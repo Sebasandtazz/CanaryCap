@@ -20,6 +20,9 @@ extern "C" {
 /* Maximum number of devices to track */
 #define ZB_REGISTRY_MAX_DEVICES 10
 
+/* Device heartbeat timeout in seconds */
+#define ZB_DEVICE_TIMEOUT_SEC 90
+
 /* Device information structure */
 typedef struct {
     uint16_t short_addr;                    // Network short address
@@ -28,6 +31,9 @@ typedef struct {
     bool is_bound;                          // Whether binding is established
     bool has_impact_cluster;                // Supports impact alerts
     bool has_gas_cluster;                   // Supports gas alerts
+    uint64_t last_seen_timestamp;           // Last heartbeat timestamp (microseconds)
+    bool is_active;                         // Device is active (not timed out)
+    uint32_t last_heartbeat_seq;            // Last heartbeat sequence number
 } zb_device_info_t;
 
 /**
@@ -111,6 +117,28 @@ void zb_registry_clear(void);
  * @return Number of devices in registry
  */
 uint8_t zb_registry_get_count(void);
+
+/**
+ * @brief Update last seen timestamp for device (from heartbeat)
+ * 
+ * @param short_addr Network short address
+ * @param seq_num Heartbeat sequence number
+ * @return ESP_OK on success
+ */
+esp_err_t zb_registry_update_heartbeat(uint16_t short_addr, uint32_t seq_num);
+
+/**
+ * @brief Check all devices for heartbeat timeout
+ * 
+ * Marks devices as inactive if they haven't sent heartbeat within timeout period.
+ * Returns array of devices that timed out.
+ * 
+ * @param timed_out_devices Array to fill with timed out device addresses
+ * @param max_devices Maximum size of the array
+ * @param count Output: number of devices that timed out
+ * @return ESP_OK on success
+ */
+esp_err_t zb_registry_check_timeouts(uint16_t *timed_out_devices, uint8_t max_devices, uint8_t *count);
 
 #ifdef __cplusplus
 }

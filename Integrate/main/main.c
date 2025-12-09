@@ -129,6 +129,11 @@ static float baseline_mag = 0.0f;
 static TimerHandle_t button_hold_timer = NULL;
 static bool button_held = false;
 
+/* Double-press detection for soft leave on SPIFFS button */
+static volatile uint32_t spiffs_button_last_press_time = 0;
+static volatile uint8_t spiffs_button_press_count = 0;
+#define DOUBLE_PRESS_TIMEOUT_MS 500  // 500ms window for double press
+
 //Def for Buzzer
 #define LEDC_TIMER              LEDC_TIMER_0
 #define LEDC_MODE               LEDC_LOW_SPEED_MODE
@@ -669,13 +674,27 @@ fclose(
 }
 */
 
-/* GPIO 8 button ISR - SPIFFS clear */
+/* GPIO 8 button ISR - SPIFFS clear (hold 5s) or soft leave (double press) */
 static void IRAM_ATTR spiffs_clear_button_handler(void* arg){
-    /* Start the 5-second hold timer for SPIFFS clear */
     uint32_t level = gpio_get_level(SPIFFS_CLEAR_BUTTON_GPIO);
+    uint32_t now = xTaskGetTickCountFromISR();
     
     if (level == 0) {
         /* Button pressed */
+        uint32_t time_since_last = (now - spiffs_button_last_press_time) * 1000 / configTICK_RATE_HZ;
+        
+        if (time_since_last < DOUBLE_PRESS_TIMEOUT_MS) {
+            /* Double press detected - trigger soft leave */
+            spiffs_button_press_count = 2;
+            ESP_EARLY_LOGI("BUTTON", "Double press detected - triggering soft leave");
+        } else {
+            /* First press - start counting */
+            spiffs_button_press_count = 1;
+        }
+        
+        spiffs_button_last_press_time = now;
+        
+        /* Start the 5-second hold timer for SPIFFS clear */
         if (!button_held && button_hold_timer != NULL) {
             button_held = true;
             BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -910,12 +929,12 @@ void adc_task(void *param)
                         }
                         
                         if(i % 32 == 0) { // Log every 32nd valid sample
-                        ESP_LOGI(TAGADC, "ADC%d Ch%d raw=%"PRIu32" mV=%"PRIu32,
-                                parsed_data[i].unit + 1,
-                                parsed_data[i].channel,
-                                raw,
-                                voltage_mv);
-                            } 
+                        // ESP_LOGI(TAGADC, "ADC%d Ch%d raw=%"PRIu32" mV=%"PRIu32,
+                        //         parsed_data[i].unit + 1,
+                        //         parsed_data[i].channel,
+                        //         raw,
+                        //         voltage_mv);
+                        //     } 
                         }
                         else {
                         // ESP_LOGW(TAGADC, "Invalid data [ADC%d_Ch%d_%"PRIu32"]",
@@ -1081,6 +1100,15 @@ static void mesh_device_event_callback(bool joined, uint16_t device_addr)
     }
 }
 
+static void heartbeat_received_callback(const canary_heartbeat_msg_t *msg, uint16_t src_addr)
+{
+    ESP_LOGD(TAGZB, "Heartbeat from 0x%04x: seq=%lu, uptime=%lu sec, battery=%u%%",
+             src_addr, msg->seq_num, msg->uptime_sec, msg->battery_level);
+    
+    /* Update device registry with heartbeat timestamp */
+    zb_registry_update_heartbeat(src_addr, msg->seq_num);
+}
+
 static void network_status_received_callback(const canary_network_status_msg_t *msg, uint16_t src_addr)
 {
     if (msg->state == CANARY_NETWORK_CONNECTED) {
@@ -1233,6 +1261,24 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
                         vTaskDelay(pdMS_TO_TICKS(100));
                     }
                     buzzer_beep_ms(LEDC_FREQUENCY, 400);
+                    
+                } else if (msg->info.cluster == ZB_ZCL_CLUSTER_ID_CANARY_HEARTBEAT) {
+                    canary_heartbeat_msg_t *hb = (canary_heartbeat_msg_t*)msg->data.value;
+                    
+                    ESP_LOGD(TAGZB, "==== HEARTBEAT ==== SRC=0x%04x SEQ=%lu UPTIME=%lu BATTERY=%u%% ====",
+                             src_addr, hb->seq_num, hb->uptime_sec, hb->battery_level);
+                    
+                    /* Invoke the registered callback */
+                    heartbeat_received_callback(hb, src_addr);
+                    
+                } else if (msg->info.cluster == ZB_ZCL_CLUSTER_ID_CANARY_NETWORK_STATUS) {
+                    canary_network_status_msg_t *status = (canary_network_status_msg_t*)msg->data.value;
+                    
+                    ESP_LOGI(TAGZB, "==== NETWORK STATUS ==== SRC=0x%04x STATE=%s ====",
+                             src_addr, zb_cluster_network_state_to_string(status->state));
+                    
+                    /* Invoke the registered callback */
+                    network_status_received_callback(status, src_addr);
                 }
             }
         }
@@ -1267,6 +1313,7 @@ static void esp_zb_task(void *pvParameters)
     zb_cluster_register_network_status_callback(network_status_received_callback);
     zb_cluster_register_impact_alert_callback(impact_alert_received_callback);
     zb_cluster_register_gas_alert_callback(gas_alert_received_callback);
+    zb_cluster_register_heartbeat_callback(heartbeat_received_callback);
 
     /* Set overall network size to support multiple routers (must be called before esp_zb_init) */
     esp_zb_overall_network_size_set(20);  /* Support up to 20 devices in network */
@@ -1373,13 +1420,15 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
 /* Heartbeat task to show connection status */
 static void button_monitor_task(void *pvParameters)
 {
-    const TickType_t hold_time_ticks = pdMS_TO_TICKS(5000);  // 5 seconds for factory reset
+    const TickType_t factory_reset_time_ticks = pdMS_TO_TICKS(5000);  // 5 seconds for factory reset
     bool factory_reset_triggered = false;
     bool short_press_handled = false;
     uint32_t last_debug_tick = 0;
     
     ESP_LOGI(TAGZB, "Button monitor task started - GPIO %d", BUTTON_GPIO);
-    ESP_LOGI(TAGZB, "GPIO23: Single press cancels severe alert, hold 5 sec for factory reset");
+    ESP_LOGI(TAGZB, "GPIO23: Single press cancels severe alert");
+    ESP_LOGI(TAGZB, "GPIO23: Hold 5 sec for factory reset");
+    ESP_LOGI(TAGZB, "GPIO8: Double-press for soft leave (test mode)");
     ESP_LOGI(TAGZB, "GPIO8: Hold 5 sec to clear SPIFFS logs");
     
     while (1) {
@@ -1411,9 +1460,9 @@ static void button_monitor_task(void *pvParameters)
         if (button_pressed && !factory_reset_triggered) {
             uint32_t hold_duration = xTaskGetTickCount() - button_press_time;
             
-            ESP_LOGI(TAGZB, "Button held for %lu ms", (hold_duration * 1000) / configTICK_RATE_HZ);
+            uint32_t hold_ms = (hold_duration * 1000) / configTICK_RATE_HZ;
             
-            if (hold_duration >= hold_time_ticks) {
+            if (hold_duration >= factory_reset_time_ticks) {
                 /* Button held for 5 seconds - trigger factory reset */
                 factory_reset_triggered = true;
                 
@@ -1442,6 +1491,12 @@ static void button_monitor_task(void *pvParameters)
                 /* Restart ESP */
                 esp_restart();
             }
+            
+            /* Show progress every second during hold */
+            if (hold_ms / 1000 != (hold_ms - 100) / 1000) {
+                ESP_LOGI(TAGZB, "Button held for %lu seconds...", hold_ms / 1000);
+            }
+            
         } else if (!button_pressed) {
             /* Reset flag when button is released */
             factory_reset_triggered = false;
@@ -1453,15 +1508,17 @@ static void button_monitor_task(void *pvParameters)
 
 static void heartbeat_task(void *pvParameters)
 {
+    uint32_t heartbeat_seq = 0;
+    uint32_t boot_time_sec = 0;
     int pulse_count = 0;
     int beep_counter = 0;
+    
     while (1) {
         bool is_joined = zb_mesh_is_joined();
         uint16_t short_addr = esp_zb_get_short_address();
         
         if (is_joined && short_addr != 0xFFFF) {
             /* Connected - blink HEARTBEAT LED every 2 seconds */
-            // ESP_LOGI(TAGZB, "[HEARTBEAT] Connected to network - Short Addr: 0x%04x", short_addr);
             
             /* Quick pulse on HEARTBEAT LED to show we're alive */
             gpio_set_level(HEARTBEAT_LED_GPIO, 0);  // ON
@@ -1469,8 +1526,18 @@ static void heartbeat_task(void *pvParameters)
             gpio_set_level(HEARTBEAT_LED_GPIO, 1);  // OFF
             
             pulse_count++;
-            if (pulse_count % 5 == 0) {  // Every 10 seconds
-                // ESP_LOGW(TAGZB, "========== NETWORK STATUS: CONNECTED (0x%04x) ==========", short_addr);
+            boot_time_sec += 2;  // Increment uptime (2 seconds per loop)
+            
+            /* Send heartbeat message every 30 seconds (15 pulses) */
+            if (pulse_count >= 15) {
+                heartbeat_seq++;
+                esp_err_t ret = zb_cluster_send_heartbeat(heartbeat_seq, boot_time_sec, 255);
+                if (ret == ESP_OK) {
+                    ESP_LOGI(TAGZB, "Heartbeat sent: seq=%lu, uptime=%lu sec", heartbeat_seq, boot_time_sec);
+                } else {
+                    ESP_LOGW(TAGZB, "Failed to send heartbeat");
+                }
+                pulse_count = 0;
             }
             
             vTaskDelay(pdMS_TO_TICKS(2000));  // 2 second heartbeat
@@ -1478,7 +1545,6 @@ static void heartbeat_task(void *pvParameters)
         } else {
             /* Not connected - STATUS LED should be blinking (handled by mesh callback) */
             /* Sound buzzer periodically to alert disconnection */
-            // ESP_LOGW(TAGZB, "[HEARTBEAT] Not connected - Short Addr: 0x%04x (searching...)", short_addr);
             
             beep_counter++;
             if (beep_counter >= 3) {  // Beep every 3 seconds when disconnected
@@ -1488,6 +1554,89 @@ static void heartbeat_task(void *pvParameters)
             
             pulse_count = 0;
             vTaskDelay(pdMS_TO_TICKS(1000));  // Check every second when disconnected
+        }
+    }
+}
+
+/* Device timeout checker task (for coordinators only) */
+static void device_timeout_checker_task(void *pvParameters)
+{
+    uint16_t timed_out_devices[ZB_REGISTRY_MAX_DEVICES];
+    uint8_t timeout_count;
+    
+    ESP_LOGI(TAGZB, "Device timeout checker task started (coordinator mode)");
+    
+    while (1) {
+        /* Check for device timeouts every 30 seconds */
+        vTaskDelay(pdMS_TO_TICKS(30000));
+        
+        /* Only check if we're joined to network */
+        if (!zb_mesh_is_joined()) {
+            continue;
+        }
+        
+        /* Check for timed out devices */
+        esp_err_t ret = zb_registry_check_timeouts(timed_out_devices, ZB_REGISTRY_MAX_DEVICES, &timeout_count);
+        
+        if (ret == ESP_OK && timeout_count > 0) {
+            ESP_LOGE(TAGZB, "=== %d DEVICE(S) TIMED OUT (NO HEARTBEAT) ===", timeout_count);
+            
+            for (int i = 0; i < timeout_count; i++) {
+                ESP_LOGE(TAGZB, "*** DEVICE TIMEOUT: 0x%04x (no heartbeat for %d sec) ***",
+                         timed_out_devices[i], ZB_DEVICE_TIMEOUT_SEC);
+                
+                /* Flash HEALTH LED to indicate device timeout */
+                for (int j = 0; j < 3; j++) {
+                    gpio_set_level(HEALTH_LED_GPIO, 0);  // ON
+                    vTaskDelay(pdMS_TO_TICKS(200));
+                    gpio_set_level(HEALTH_LED_GPIO, 1);  // OFF
+                    vTaskDelay(pdMS_TO_TICKS(200));
+                }
+                
+                /* Alert tone */
+                buzzer_beep_ms(LEDC_FREQUENCY, 500);
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+        }
+    }
+}
+
+/* Soft leave monitor task - watches for double press on SPIFFS button */
+static void soft_leave_monitor_task(void *pvParameters)
+{
+    ESP_LOGI(TAGZB, "Soft leave monitor task started - double-press GPIO8 to soft leave");
+    
+    while (1) {
+        /* Check every 100ms */
+        vTaskDelay(pdMS_TO_TICKS(100));
+        
+        /* Check if double press was detected */
+        if (spiffs_button_press_count >= 2) {
+            /* Reset counter */
+            spiffs_button_press_count = 0;
+            
+            ESP_LOGW(TAGZB, "=== SOFT LEAVE TRIGGERED (DOUBLE PRESS) ===");
+            ESP_LOGW(TAGZB, "GPIO8 double-pressed - leaving network gracefully...");
+            
+            /* Flash PENDING LED to indicate soft leave via SPIFFS button */
+            for (int i = 0; i < 5; i++) {
+                gpio_set_level(PENDING_LED_GPIO, 0);  // ON
+                vTaskDelay(pdMS_TO_TICKS(150));
+                gpio_set_level(PENDING_LED_GPIO, 1);  // OFF
+                vTaskDelay(pdMS_TO_TICKS(150));
+            }
+            
+            /* Perform soft leave - sends disconnect notification and leaves without factory reset */
+            esp_err_t ret = zb_mesh_soft_leave(true);  // true = attempt to rejoin
+            
+            if (ret == ESP_OK) {
+                ESP_LOGI(TAGZB, "Soft leave initiated - device will attempt to rejoin");
+            } else {
+                ESP_LOGE(TAGZB, "Soft leave failed: %s", esp_err_to_name(ret));
+            }
+            
+            /* Wait a bit before allowing another soft leave */
+            vTaskDelay(pdMS_TO_TICKS(3000));
         }
     }
 }
@@ -1666,13 +1815,24 @@ void app_main(void)
 
     xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
     
-    /* Start heartbeat task to show connection status */
+    /* Start heartbeat task to show connection status and send heartbeat messages */
     xTaskCreate(heartbeat_task, "heartbeat", 2048, NULL, 3, NULL);
-    ESP_LOGI(TAGZB, "Heartbeat task started - will show connection status every 2 seconds");
+    ESP_LOGI(TAGZB, "Heartbeat task started - sends heartbeat every 30 seconds");
+    
+    /* Start device timeout checker for coordinators */
+#ifndef ZB_BUILD_AS_ROUTER
+    /* Only start timeout checker if building as coordinator */
+    xTaskCreate(device_timeout_checker_task, "device_timeout", 2048, NULL, 3, NULL);
+    ESP_LOGI(TAGZB, "Device timeout checker started (coordinator mode)");
+#endif
+    
+    /* Start soft leave monitor task - double-press GPIO8 to soft leave */
+    xTaskCreate(soft_leave_monitor_task, "soft_leave", 2048, NULL, 3, NULL);
+    ESP_LOGI(TAGZB, "Soft leave monitor started - double-press GPIO8 to soft leave");
     
     /* Start button monitor task for factory reset */
     xTaskCreate(button_monitor_task, "button_monitor", 2048, NULL, 3, NULL);
-    ESP_LOGI(TAGZB, "Button monitor started - hold boot button for 10 seconds to factory reset");
+    ESP_LOGI(TAGZB, "Button monitor started - hold GPIO23 5s for factory reset");
 
     // FILE *log_file = fopen("/spiffs/adc_log.txt", "a");
     // if (log_file == NULL) {

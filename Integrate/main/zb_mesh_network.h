@@ -138,6 +138,17 @@ esp_err_t zb_mesh_open_network(uint8_t duration_sec);
 esp_err_t zb_mesh_leave_network(void);
 
 /**
+ * @brief Soft leave for testing - leaves network but preserves credentials
+ * 
+ * This sends a leave request without factory reset, allowing the device
+ * to rejoin the same network. Used for testing disconnect scenarios.
+ * 
+ * @param rejoin Whether device should attempt to rejoin automatically
+ * @return ESP_OK on success
+ */
+esp_err_t zb_mesh_soft_leave(bool rejoin);
+
+/**
  * @brief Perform a factory reset
  * 
  * Clears all network settings and returns device to factory state.

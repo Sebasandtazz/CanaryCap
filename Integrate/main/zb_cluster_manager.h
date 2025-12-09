@@ -183,6 +183,39 @@ const char* zb_cluster_network_state_to_string(canary_network_state_t state);
  */
 const char* zb_cluster_impact_severity_to_string(canary_impact_severity_t severity);
 
+/* ============================================================================
+ * Heartbeat Messages
+ * ============================================================================ */
+
+/**
+ * @brief Send a heartbeat message
+ * 
+ * Broadcasts a periodic "I'm alive" message to all nodes in the mesh network.
+ * This allows coordinators to track device presence via timeout detection.
+ * 
+ * @param seq_num Heartbeat sequence number (incrementing)
+ * @param uptime_sec Device uptime in seconds
+ * @param battery_level Battery level percentage (0-100, use 255 if N/A)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t zb_cluster_send_heartbeat(uint32_t seq_num, uint32_t uptime_sec, uint8_t battery_level);
+
+/**
+ * @brief Callback type for heartbeat messages received from other nodes
+ * 
+ * @param msg Pointer to the received heartbeat message
+ * @param src_addr Short address of the device that sent the message
+ */
+typedef void (*zb_heartbeat_callback_t)(const canary_heartbeat_msg_t *msg, uint16_t src_addr);
+
+/**
+ * @brief Register a callback for heartbeat messages
+ * 
+ * @param callback Function to call when heartbeat is received
+ * @return ESP_OK on success
+ */
+esp_err_t zb_cluster_register_heartbeat_callback(zb_heartbeat_callback_t callback);
+
 #ifdef __cplusplus
 }
 #endif

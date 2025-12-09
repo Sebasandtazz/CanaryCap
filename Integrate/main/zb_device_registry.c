@@ -365,3 +365,78 @@ uint8_t zb_registry_get_count(void)
     }
     return count;
 }
+
+esp_err_t zb_registry_update_heartbeat(uint16_t short_addr, uint32_t seq_num)
+{
+    if (!registry_mutex) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        for (int i = 0; i < device_count; i++) {
+            if (device_registry[i].short_addr == short_addr) {
+                device_registry[i].last_seen_timestamp = esp_timer_get_time();
+                device_registry[i].is_active = true;
+                device_registry[i].last_heartbeat_seq = seq_num;
+                xSemaphoreGive(registry_mutex);
+                ESP_LOGD(TAG, "Updated heartbeat for device 0x%04x (seq=%lu)", short_addr, seq_num);
+                return ESP_OK;
+            }
+        }
+        
+        /* Device not in registry - add it */
+        if (device_count < ZB_REGISTRY_MAX_DEVICES) {
+            device_registry[device_count].short_addr = short_addr;
+            device_registry[device_count].endpoint = CANARY_ENDPOINT;
+            device_registry[device_count].last_seen_timestamp = esp_timer_get_time();
+            device_registry[device_count].is_active = true;
+            device_registry[device_count].last_heartbeat_seq = seq_num;
+            device_count++;
+            ESP_LOGI(TAG, "Added new device 0x%04x from heartbeat", short_addr);
+            xSemaphoreGive(registry_mutex);
+            return ESP_OK;
+        }
+        
+        xSemaphoreGive(registry_mutex);
+        ESP_LOGW(TAG, "Registry full, cannot add device 0x%04x", short_addr);
+        return ESP_ERR_NO_MEM;
+    }
+    
+    return ESP_ERR_TIMEOUT;
+}
+
+esp_err_t zb_registry_check_timeouts(uint16_t *timed_out_devices, uint8_t max_devices, uint8_t *count)
+{
+    if (!registry_mutex || !timed_out_devices || !count) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    *count = 0;
+    uint64_t now = esp_timer_get_time();
+    uint64_t timeout_threshold = (uint64_t)ZB_DEVICE_TIMEOUT_SEC * 1000000ULL;
+
+    if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        for (int i = 0; i < device_count; i++) {
+            if (device_registry[i].is_active) {
+                uint64_t time_since_last_seen = now - device_registry[i].last_seen_timestamp;
+                
+                if (time_since_last_seen > timeout_threshold) {
+                    device_registry[i].is_active = false;
+                    
+                    if (*count < max_devices) {
+                        timed_out_devices[*count] = device_registry[i].short_addr;
+                        (*count)++;
+                        
+                        ESP_LOGW(TAG, "Device 0x%04x timed out (no heartbeat for %llu sec)", 
+                                 device_registry[i].short_addr,
+                                 time_since_last_seen / 1000000ULL);
+                    }
+                }
+            }
+        }
+        xSemaphoreGive(registry_mutex);
+        return ESP_OK;
+    }
+    
+    return ESP_ERR_TIMEOUT;
+}

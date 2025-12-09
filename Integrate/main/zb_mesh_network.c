@@ -211,6 +211,45 @@ esp_err_t zb_mesh_leave_network(void)
     return ESP_OK;
 }
 
+esp_err_t zb_mesh_soft_leave(bool rejoin)
+{
+    if (!mesh_initialized) {
+        ESP_LOGE(TAG, "Mesh not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    ESP_LOGW(TAG, "Soft leave: leaving network temporarily (rejoin=%d)", rejoin);
+    
+    /* Send disconnect notification before leaving */
+    if (zb_mesh_is_joined()) {
+        ESP_LOGI(TAG, "Sending disconnect notification to network");
+        zb_cluster_send_network_status(CANARY_NETWORK_DISCONNECTED);
+        vTaskDelay(pdMS_TO_TICKS(500)); // Allow message to propagate
+    }
+    
+    /* Request to leave network using ZDO management leave */
+    uint16_t self_addr = esp_zb_get_short_address();
+    esp_zb_ieee_addr_t self_ieee;
+    esp_zb_get_long_address(self_ieee);
+    
+    ESP_LOGI(TAG, "Requesting leave for device 0x%04x", self_addr);
+    
+    esp_zb_zdo_mgmt_leave_req_param_t leave_req;
+    memset(&leave_req, 0, sizeof(leave_req));
+    leave_req.dst_nwk_addr = self_addr;
+    memcpy(leave_req.device_address, self_ieee, sizeof(esp_zb_ieee_addr_t));
+    leave_req.remove_children = false;
+    leave_req.rejoin = rejoin;
+    
+    esp_zb_lock_acquire(portMAX_DELAY);
+    esp_zb_zdo_device_leave_req(&leave_req, NULL, NULL);
+    esp_zb_lock_release();
+    
+    ESP_LOGI(TAG, "Soft leave request sent");
+    
+    return ESP_OK;
+}
+
 esp_err_t zb_mesh_factory_reset(void)
 {
     ESP_LOGW(TAG, "Performing factory reset");
@@ -467,6 +506,26 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
         s_last_joined_addr = 0xFFFF;
         zb_mesh_update_state(ZB_MESH_STATE_DISCONNECTED);
         zb_cluster_send_network_status(CANARY_NETWORK_DISCONNECTED);
+        break;
+
+    case ESP_ZB_ZDO_SIGNAL_LEAVE_INDICATION:
+        {
+            /* A child device has left the network */
+            esp_zb_zdo_signal_leave_indication_params_t *leave_params = 
+                (esp_zb_zdo_signal_leave_indication_params_t *)esp_zb_app_signal_get_params(p_sg_p);
+            
+            if (leave_params) {
+                ESP_LOGE(TAG, "*** CHILD DEVICE LEFT NETWORK: 0x%04x ***", leave_params->short_addr);
+                
+                /* Remove device from registry */
+                zb_registry_remove_device(leave_params->short_addr);
+                
+                /* Notify application via callback */
+                if (device_event_cb) {
+                    device_event_cb(false, leave_params->short_addr);
+                }
+            }
+        }
         break;
 
     default:

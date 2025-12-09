@@ -24,6 +24,7 @@ extern "C" {
 #define ZB_ZCL_CLUSTER_ID_CANARY_NETWORK_STATUS    0xFC00
 #define ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT      0xFC01
 #define ZB_ZCL_CLUSTER_ID_CANARY_GAS_ALERT         0xFC02
+#define ZB_ZCL_CLUSTER_ID_CANARY_HEARTBEAT         0xFC03
 
 /* Custom manufacturer code for CanaryCap */
 #define CANARY_MANUFACTURER_CODE                   0x1234
@@ -55,6 +56,11 @@ extern "C" {
 #define ZB_ZCL_ATTR_GAS_ALERT_RAW_VALUE_ID         0x0002  // uint16: raw ADC value
 #define ZB_ZCL_ATTR_GAS_ALERT_TIMESTAMP_ID         0x0003  // uint32: timestamp of detection
 
+/* Heartbeat Cluster Attributes */
+#define ZB_ZCL_ATTR_HEARTBEAT_SEQ_NUM_ID           0x0000  // uint32: sequence number
+#define ZB_ZCL_ATTR_HEARTBEAT_UPTIME_ID            0x0001  // uint32: uptime in seconds
+#define ZB_ZCL_ATTR_HEARTBEAT_TIMESTAMP_ID         0x0002  // uint32: timestamp
+
 /* ============================================================================
  * Custom Command IDs for each cluster
  * ============================================================================ */
@@ -70,6 +76,10 @@ extern "C" {
 /* Gas Alert Commands */
 #define ZB_ZCL_CMD_GAS_ALERT_REPORT_ID             0x00
 #define ZB_ZCL_CMD_GAS_ALERT_ACK_ID                0x01
+
+/* Heartbeat Commands */
+#define ZB_ZCL_CMD_HEARTBEAT_PING_ID               0x00
+#define ZB_ZCL_CMD_HEARTBEAT_RESPONSE_ID           0x01
 
 /* ============================================================================
  * Enumerations for attribute values
@@ -143,6 +153,15 @@ typedef struct {
     uint32_t timestamp;         // timestamp of detection
     uint16_t source_addr;       // short address of reporting device
 } __attribute__((packed)) canary_gas_alert_msg_t;
+
+/* Heartbeat Message */
+typedef struct {
+    uint32_t seq_num;           // sequence number (incrementing)
+    uint32_t uptime_sec;        // device uptime in seconds
+    uint32_t timestamp;         // timestamp of heartbeat
+    uint16_t source_addr;       // short address of reporting device
+    uint8_t battery_level;      // battery level percentage (0-100)
+} __attribute__((packed)) canary_heartbeat_msg_t;
 
 /* ============================================================================
  * Helper macros for attribute list creation
