@@ -468,19 +468,21 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
             /* Network is already open - no need to reopen.
              * Excessive open_network calls cause buffer pool exhaustion. */
             
-            /* When a new device joins, re-run discovery to add it to registry */
+            /* When ANY device announces (including routers), re-run discovery.
+             * CRITICAL: This ensures Router A discovers Router B when Router B joins later. */
             if (dev_annce_params->device_short_addr != esp_zb_get_short_address()) {
                 ESP_LOGI(TAG, "Device 0x%04x announced - will rediscover after stabilization", 
                          dev_annce_params->device_short_addr);
                 
-                /* Wait for device to stabilize, but not so long that it blocks network operations.
-                 * Router needs coordinator responsive during association handshake. */
-                vTaskDelay(pdMS_TO_TICKS(3000));  // 3 seconds - enough for basic stabilization
+                /* Wait longer for routers to fully initialize their endpoint and clusters.
+                 * Routers need time to register custom clusters before responding to match descriptors. */
+                vTaskDelay(pdMS_TO_TICKS(5000));  // 5 seconds - critical for router cluster initialization
                 
-                /* Re-run discovery to find the newly joined device */
+                /* Re-run discovery to find the newly joined device.
+                 * This is THE KEY to router-to-router communication! */
                 ESP_LOGI(TAG, "Re-running device discovery to find new device 0x%04x", 
                          dev_annce_params->device_short_addr);
-                zb_registry_start_discovery();
+                zb_registry_force_rediscovery();  // Force restart even if already in progress
             }
             
             if (device_event_cb) {

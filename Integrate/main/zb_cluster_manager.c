@@ -346,16 +346,22 @@ esp_err_t zb_cluster_send_impact_alert(
     /* Send to each discovered device (unicast) */
     for (int i = 0; i < device_count; i++) {
         if (devices[i].short_addr == esp_zb_get_short_address()) {
+            ESP_LOGD(TAG, "  Skipping device[%d] 0x%04x (self)", i, devices[i].short_addr);
             continue;  // Don't send to ourselves
         }
         
         if (devices[i].short_addr == 0x0000 && my_addr != 0x0000) {
+            ESP_LOGD(TAG, "  Skipping device[%d] 0x0000 (coordinator already sent)", i);
             continue;  // Skip coordinator in device list - already sent explicitly above
         }
         
         if (!devices[i].has_impact_cluster) {
+            ESP_LOGW(TAG, "  Skipping device[%d] 0x%04x (no impact cluster support)", i, devices[i].short_addr);
             continue;  // Skip if device doesn't support impact cluster
         }
+        
+        ESP_LOGI(TAG, "  Attempting to send to device[%d] 0x%04x (has_impact=%d, is_bound=%d)...", 
+                 i, devices[i].short_addr, devices[i].has_impact_cluster, devices[i].is_bound);
         
         /* Validate device still exists before sending */
         zb_device_info_t check_device;
@@ -494,12 +500,22 @@ esp_err_t zb_cluster_send_gas_alert(
     /* Send to each discovered device (unicast) */
     for (int i = 0; i < device_count; i++) {
         if (devices[i].short_addr == esp_zb_get_short_address()) {
+            ESP_LOGD(TAG, "  Skipping device[%d] 0x%04x (self)", i, devices[i].short_addr);
             continue;  // Don't send to ourselves
         }
         
+        if (devices[i].short_addr == 0x0000 && esp_zb_get_short_address() != 0x0000) {
+            ESP_LOGD(TAG, "  Skipping device[%d] 0x0000 (coordinator already sent)", i);
+            continue;  // Skip coordinator in device list - already sent explicitly above
+        }
+        
         if (!devices[i].has_gas_cluster) {
+            ESP_LOGW(TAG, "  Skipping device[%d] 0x%04x (no gas cluster support)", i, devices[i].short_addr);
             continue;  // Skip if device doesn't support gas cluster
         }
+        
+        ESP_LOGI(TAG, "  Attempting to send to device[%d] 0x%04x (has_gas=%d, is_bound=%d)...", 
+                 i, devices[i].short_addr, devices[i].has_gas_cluster, devices[i].is_bound);
         
         /* Validate device still exists before sending */
         zb_device_info_t check_device;

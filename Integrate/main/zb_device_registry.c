@@ -87,6 +87,43 @@ esp_err_t zb_registry_start_discovery(void)
     return ESP_OK;
 }
 
+esp_err_t zb_registry_force_rediscovery(void)
+{
+    ESP_LOGW(TAG, "FORCING device rediscovery (restarting even if in progress)...");
+    
+    /* Reset discovery flag to allow restart */
+    discovery_in_progress = false;
+    
+    /* Small delay to ensure previous discovery operations complete */
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    ESP_LOGI(TAG, "Starting forced device discovery for custom clusters...");
+    discovery_in_progress = true;
+    
+    /* Don't clear registry - keep existing devices and add new ones */
+
+    /* Search for devices with our custom impact alert cluster */
+    esp_zb_zdo_match_desc_req_param_t find_req;
+    find_req.dst_nwk_addr = 0xFFFF;           // Broadcast to all devices
+    find_req.addr_of_interest = 0xFFFD;       // All routers and coordinator (not sleepy end devices)
+    find_req.profile_id = ESP_ZB_AF_HA_PROFILE_ID;
+    
+    /* Build cluster list for match descriptor */
+    static uint16_t cluster_list[] = {
+        ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT,
+        ZB_ZCL_CLUSTER_ID_CANARY_GAS_ALERT
+    };
+    
+    /* Set input clusters (servers) and output clusters (clients) */
+    find_req.num_in_clusters = 2;  // Looking for servers with these clusters
+    find_req.num_out_clusters = 0;
+    find_req.cluster_list = cluster_list;
+    
+    esp_zb_zdo_match_cluster(&find_req, user_find_cb, NULL);
+
+    return ESP_OK;
+}
+
 /* ============================================================================
  * ZDO Callbacks
  * ============================================================================ */

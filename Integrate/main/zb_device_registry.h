@@ -54,6 +54,13 @@ esp_err_t zb_registry_init(void);
 esp_err_t zb_registry_start_discovery(void);
 
 /**
+ * @brief Force rediscovery even if already in progress (for router-to-router discovery)
+ * 
+ * @return ESP_OK on success
+ */
+esp_err_t zb_registry_force_rediscovery(void);
+
+/**
  * @brief Add or update a device in the registry
  * 
  * @param short_addr Network short address
