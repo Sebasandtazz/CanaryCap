@@ -28,10 +28,11 @@ extern "C" {
 
 /* Network parameters */
 #define ZB_MESH_PRIMARY_CHANNEL_MASK    ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK
-#define ZB_MESH_PERMIT_JOIN_DURATION    240  // seconds - longer window for joins
+#define ZB_MESH_PERMIT_JOIN_DURATION    240  // seconds - 4 min initial window
 
-/* Periodic network reopen interval for coordinator (seconds) */
-#define ZB_MESH_REOPEN_INTERVAL_SEC     60   // reopen every 60 seconds for frequent discovery
+/* NOTE: Do NOT automatically reopen network! This causes buffer exhaustion.
+ * Routers can route messages as long as RxOnWhenIdle=true is set.
+ * Only manually reopen when adding new devices. */
 
 /* Commissioning retry interval when not joined (seconds) */
 #define ZB_MESH_COMMISSION_RETRY_SEC    30

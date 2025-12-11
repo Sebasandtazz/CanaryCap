@@ -101,6 +101,12 @@ static void user_find_cb(esp_zb_zdp_status_t zdo_status, uint16_t addr, uint8_t 
             ESP_LOGD(TAG, "Ignoring self in device discovery");
             return;
         }
+        
+        /* Don't add coordinator to discovered devices - it's always reachable at 0x0000 */
+        if (addr == 0x0000) {
+            ESP_LOGD(TAG, "Ignoring coordinator (0x0000) in device discovery - always reachable");
+            return;
+        }
 
         ESP_LOGI(TAG, "Found device: addr=0x%04x, endpoint=%d", addr, endpoint);
         
@@ -141,8 +147,8 @@ static void user_find_cb(esp_zb_zdp_status_t zdo_status, uint16_t addr, uint8_t 
         ieee_req.request_type = 0;  // Single device response
         ieee_req.start_index = 0;
         
-        /* Additional delay before requesting IEEE address */
-        vTaskDelay(pdMS_TO_TICKS(200));
+        /* Wait longer for newly joined devices to fully initialize */
+        vTaskDelay(pdMS_TO_TICKS(2000));
         
         esp_zb_zdo_ieee_addr_req(&ieee_req, ieee_addr_cb, (void *)(uintptr_t)addr);
     } else {
@@ -164,30 +170,102 @@ static void ieee_addr_cb(esp_zb_zdp_status_t zdo_status, esp_zb_zdo_ieee_addr_rs
         /* Update registry with IEEE address */
         zb_registry_update_ieee_addr(short_addr, resp->ieee_addr);
         
-        /* Delay before binding to allow buffers to clear */
-        vTaskDelay(pdMS_TO_TICKS(100));
+        /* Wait longer for device to fully initialize clusters and binding table */
+        vTaskDelay(pdMS_TO_TICKS(3000));
         
         /* Get device info for binding */
         zb_device_info_t device;
         if (zb_registry_get_device(short_addr, &device) == ESP_OK) {
-            /* Create binding from remote device to us for impact alerts */
+            esp_zb_ieee_addr_t my_ieee;
+            esp_zb_get_long_address(my_ieee);
+            
+            ESP_LOGI(TAG, "Creating bidirectional bindings for device 0x%04x", short_addr);
+            
+            /* BIDIRECTIONAL BINDING FOR IMPACT ALERTS */
+            
+            /* Bind 1: Remote device (CLIENT) -> Us (SERVER) - for receiving their impacts */
             esp_zb_zdo_bind_req_param_t bind_req;
             memcpy(bind_req.src_address, device.ieee_addr, sizeof(esp_zb_ieee_addr_t));
             bind_req.src_endp = device.endpoint;
             bind_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT;
             bind_req.dst_addr_mode = ESP_ZB_ZDO_BIND_DST_ADDR_MODE_64_BIT_EXTENDED;
-            esp_zb_get_long_address(bind_req.dst_address_u.addr_long);
+            memcpy(bind_req.dst_address_u.addr_long, my_ieee, sizeof(esp_zb_ieee_addr_t));
             bind_req.dst_endp = HA_ONOFF_SWITCH_ENDPOINT;
             bind_req.req_dst_addr = device.short_addr;
             
+            ESP_LOGI(TAG, "  Binding remote 0x%04x -> us (impact alerts)...", short_addr);
             esp_zb_zdo_device_bind_req(&bind_req, bind_cb, (void *)(uintptr_t)short_addr);
+            vTaskDelay(pdMS_TO_TICKS(500));
             
-            /* Delay before second bind to prevent buffer exhaustion */
-            vTaskDelay(pdMS_TO_TICKS(200));
+            /* Bind 2: Us (CLIENT) -> Remote device (SERVER) - for sending our impacts to them */
+            memcpy(bind_req.src_address, my_ieee, sizeof(esp_zb_ieee_addr_t));
+            bind_req.src_endp = HA_ONOFF_SWITCH_ENDPOINT;
+            bind_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT;
+            bind_req.dst_addr_mode = ESP_ZB_ZDO_BIND_DST_ADDR_MODE_64_BIT_EXTENDED;
+            memcpy(bind_req.dst_address_u.addr_long, device.ieee_addr, sizeof(esp_zb_ieee_addr_t));
+            bind_req.dst_endp = device.endpoint;
+            bind_req.req_dst_addr = esp_zb_get_short_address();  // Bind request to ourselves
             
-            /* Also bind gas alert cluster */
+            ESP_LOGI(TAG, "  Binding us -> remote 0x%04x (impact alerts)...", short_addr);
+            esp_zb_zdo_device_bind_req(&bind_req, bind_cb, (void *)(uintptr_t)short_addr);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            
+            /* BIDIRECTIONAL BINDING FOR GAS ALERTS */
+            
+            /* Bind 3: Remote device (CLIENT) -> Us (SERVER) */
+            memcpy(bind_req.src_address, device.ieee_addr, sizeof(esp_zb_ieee_addr_t));
+            bind_req.src_endp = device.endpoint;
             bind_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_GAS_ALERT;
+            bind_req.dst_addr_mode = ESP_ZB_ZDO_BIND_DST_ADDR_MODE_64_BIT_EXTENDED;
+            memcpy(bind_req.dst_address_u.addr_long, my_ieee, sizeof(esp_zb_ieee_addr_t));
+            bind_req.dst_endp = HA_ONOFF_SWITCH_ENDPOINT;
+            bind_req.req_dst_addr = device.short_addr;
+            
+            ESP_LOGI(TAG, "  Binding remote 0x%04x -> us (gas alerts)...", short_addr);
             esp_zb_zdo_device_bind_req(&bind_req, bind_cb, (void *)(uintptr_t)short_addr);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            
+            /* Bind 4: Us (CLIENT) -> Remote device (SERVER) */
+            memcpy(bind_req.src_address, my_ieee, sizeof(esp_zb_ieee_addr_t));
+            bind_req.src_endp = HA_ONOFF_SWITCH_ENDPOINT;
+            bind_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_GAS_ALERT;
+            bind_req.dst_addr_mode = ESP_ZB_ZDO_BIND_DST_ADDR_MODE_64_BIT_EXTENDED;
+            memcpy(bind_req.dst_address_u.addr_long, device.ieee_addr, sizeof(esp_zb_ieee_addr_t));
+            bind_req.dst_endp = device.endpoint;
+            bind_req.req_dst_addr = esp_zb_get_short_address();
+            
+            ESP_LOGI(TAG, "  Binding us -> remote 0x%04x (gas alerts)...", short_addr);
+            esp_zb_zdo_device_bind_req(&bind_req, bind_cb, (void *)(uintptr_t)short_addr);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            
+            /* BIDIRECTIONAL BINDING FOR HEARTBEAT */
+            
+            /* Bind 5: Remote device (CLIENT) -> Us (SERVER) */
+            memcpy(bind_req.src_address, device.ieee_addr, sizeof(esp_zb_ieee_addr_t));
+            bind_req.src_endp = device.endpoint;
+            bind_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_HEARTBEAT;
+            bind_req.dst_addr_mode = ESP_ZB_ZDO_BIND_DST_ADDR_MODE_64_BIT_EXTENDED;
+            memcpy(bind_req.dst_address_u.addr_long, my_ieee, sizeof(esp_zb_ieee_addr_t));
+            bind_req.dst_endp = HA_ONOFF_SWITCH_ENDPOINT;
+            bind_req.req_dst_addr = device.short_addr;
+            
+            ESP_LOGI(TAG, "  Binding remote 0x%04x -> us (heartbeat)...", short_addr);
+            esp_zb_zdo_device_bind_req(&bind_req, bind_cb, (void *)(uintptr_t)short_addr);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            
+            /* Bind 6: Us (CLIENT) -> Remote device (SERVER) */
+            memcpy(bind_req.src_address, my_ieee, sizeof(esp_zb_ieee_addr_t));
+            bind_req.src_endp = HA_ONOFF_SWITCH_ENDPOINT;
+            bind_req.cluster_id = ZB_ZCL_CLUSTER_ID_CANARY_HEARTBEAT;
+            bind_req.dst_addr_mode = ESP_ZB_ZDO_BIND_DST_ADDR_MODE_64_BIT_EXTENDED;
+            memcpy(bind_req.dst_address_u.addr_long, device.ieee_addr, sizeof(esp_zb_ieee_addr_t));
+            bind_req.dst_endp = device.endpoint;
+            bind_req.req_dst_addr = esp_zb_get_short_address();
+            
+            ESP_LOGI(TAG, "  Binding us -> remote 0x%04x (heartbeat)...", short_addr);
+            esp_zb_zdo_device_bind_req(&bind_req, bind_cb, (void *)(uintptr_t)short_addr);
+            
+            ESP_LOGI(TAG, "All 6 bidirectional bindings initiated for device 0x%04x", short_addr);
         }
     }
 }
@@ -337,6 +415,25 @@ esp_err_t zb_registry_remove_device(uint16_t short_addr)
             device_count--;
             xSemaphoreGive(registry_mutex);
             ESP_LOGI(TAG, "Removed device 0x%04x", short_addr);
+            return ESP_OK;
+        }
+    }
+
+    xSemaphoreGive(registry_mutex);
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t zb_registry_mark_inactive(uint16_t short_addr)
+{
+    if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    for (int i = 0; i < device_count; i++) {
+        if (device_registry[i].short_addr == short_addr) {
+            device_registry[i].is_active = false;
+            xSemaphoreGive(registry_mutex);
+            ESP_LOGI(TAG, "Marked device 0x%04x as inactive", short_addr);
             return ESP_OK;
         }
     }

@@ -209,7 +209,7 @@ esp_err_t zb_cluster_send_network_status(canary_network_state_t state)
     cmd_req.data.size = sizeof(msg);
 
     /* Small delay to prevent buffer exhaustion */
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(20));
     
     esp_zb_lock_acquire(portMAX_DELAY);
     uint8_t seq = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
@@ -298,6 +298,13 @@ esp_err_t zb_cluster_send_impact_alert(
     
     ESP_LOGI(TAG, "Sending impact alert to %d discovered devices + coordinator", device_count);
     
+    /* Log all discovered devices for debugging */
+    for (int i = 0; i < device_count; i++) {
+        ESP_LOGI(TAG, "  Device[%d]: addr=0x%04x, endpoint=%d, has_impact=%d, has_gas=%d", 
+                 i, devices[i].short_addr, devices[i].endpoint, 
+                 devices[i].has_impact_cluster, devices[i].has_gas_cluster);
+    }
+    
     /* Build ZCL command */
     esp_zb_zcl_custom_cluster_cmd_req_t cmd_req;
     memset(&cmd_req, 0, sizeof(cmd_req));
@@ -314,17 +321,27 @@ esp_err_t zb_cluster_send_impact_alert(
     cmd_req.data.size = sizeof(msg);
     
     int success_count = 0;
+    uint16_t my_addr = esp_zb_get_short_address();
+    uint8_t seq = 0;
     
-    /* Send to coordinator (always) */
-    cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0x0000;
-    esp_zb_lock_acquire(portMAX_DELAY);
-    uint8_t seq = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
-    esp_zb_lock_release();
-    if (seq != 0) {
-        ESP_LOGI(TAG, "Impact alert sent to coordinator 0x0000, seq=%d", seq);
-        success_count++;
+    /* Send to coordinator only if we're NOT the coordinator */
+    if (my_addr != 0x0000) {
+        ESP_LOGW(TAG, "Router 0x%04x sending to coordinator 0x0000 - cluster=0x%04x cmd=0x%02x size=%d",
+                 my_addr, cmd_req.cluster_id, cmd_req.custom_cmd_id, cmd_req.data.size);
+        cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0x0000;
+        esp_zb_lock_acquire(portMAX_DELAY);
+        seq = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+        esp_zb_lock_release();
+        if (seq != 0) {
+            ESP_LOGI(TAG, "Impact alert sent to coordinator 0x0000, seq=%d", seq);
+            success_count++;
+        } else {
+            ESP_LOGE(TAG, "FAILED to send impact alert to coordinator - seq=0");
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));  // Increased for stability
+    } else {
+        ESP_LOGI(TAG, "I AM the coordinator - skipping self-send to 0x0000");
     }
-    vTaskDelay(pdMS_TO_TICKS(100));  // Increased delay
     
     /* Send to each discovered device (unicast) */
     for (int i = 0; i < device_count; i++) {
@@ -332,8 +349,19 @@ esp_err_t zb_cluster_send_impact_alert(
             continue;  // Don't send to ourselves
         }
         
+        if (devices[i].short_addr == 0x0000 && my_addr != 0x0000) {
+            continue;  // Skip coordinator in device list - already sent explicitly above
+        }
+        
         if (!devices[i].has_impact_cluster) {
             continue;  // Skip if device doesn't support impact cluster
+        }
+        
+        /* Validate device still exists before sending */
+        zb_device_info_t check_device;
+        if (zb_registry_get_device(devices[i].short_addr, &check_device) != ESP_OK) {
+            ESP_LOGW(TAG, "Device 0x%04x no longer in registry, skipping", devices[i].short_addr);
+            continue;
         }
         
         cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = devices[i].short_addr;
@@ -350,7 +378,7 @@ esp_err_t zb_cluster_send_impact_alert(
             ESP_LOGW(TAG, "Failed to send impact alert to router 0x%04x", devices[i].short_addr);
         }
         
-        vTaskDelay(pdMS_TO_TICKS(100));  // Increased delay to prevent buffer exhaustion
+        vTaskDelay(pdMS_TO_TICKS(50));  // Increased for stability
     }
 
     if (success_count > 0) {
@@ -420,6 +448,13 @@ esp_err_t zb_cluster_send_gas_alert(
     
     ESP_LOGI(TAG, "Sending gas alert to %d discovered devices + coordinator", device_count);
     
+    /* Log all discovered devices for debugging */
+    for (int i = 0; i < device_count; i++) {
+        ESP_LOGI(TAG, "  Device[%d]: addr=0x%04x, endpoint=%d, has_impact=%d, has_gas=%d", 
+                 i, devices[i].short_addr, devices[i].endpoint, 
+                 devices[i].has_impact_cluster, devices[i].has_gas_cluster);
+    }
+    
     /* Build ZCL command */
     esp_zb_zcl_custom_cluster_cmd_req_t cmd_req;
     memset(&cmd_req, 0, sizeof(cmd_req));
@@ -436,17 +471,25 @@ esp_err_t zb_cluster_send_gas_alert(
     cmd_req.data.size = sizeof(msg);
     
     int success_count = 0;
+    uint16_t my_addr = esp_zb_get_short_address();
+    uint8_t seq = 0;
     
-    /* Send to coordinator (always) */
-    cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0x0000;
-    esp_zb_lock_acquire(portMAX_DELAY);
-    uint8_t seq = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
-    esp_zb_lock_release();
-    if (seq != 0) {
-        ESP_LOGI(TAG, "Gas alert sent to coordinator 0x0000, seq=%d", seq);
-        success_count++;
+    /* Send to coordinator only if we're NOT the coordinator */
+    if (my_addr != 0x0000) {
+        cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = 0x0000;
+        esp_zb_lock_acquire(portMAX_DELAY);
+        seq = esp_zb_zcl_custom_cluster_cmd_req(&cmd_req);
+        esp_zb_lock_release();
+        if (seq != 0) {
+            ESP_LOGI(TAG, "Gas alert sent to coordinator 0x0000, seq=%d", seq);
+            success_count++;
+        } else {
+            ESP_LOGW(TAG, "Failed to send gas alert to coordinator");
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));  // Increased for stability
+    } else {
+        ESP_LOGI(TAG, "I AM the coordinator - skipping self-send to 0x0000");
     }
-    vTaskDelay(pdMS_TO_TICKS(100));  // Increased delay
     
     /* Send to each discovered device (unicast) */
     for (int i = 0; i < device_count; i++) {
@@ -456,6 +499,13 @@ esp_err_t zb_cluster_send_gas_alert(
         
         if (!devices[i].has_gas_cluster) {
             continue;  // Skip if device doesn't support gas cluster
+        }
+        
+        /* Validate device still exists before sending */
+        zb_device_info_t check_device;
+        if (zb_registry_get_device(devices[i].short_addr, &check_device) != ESP_OK) {
+            ESP_LOGW(TAG, "Device 0x%04x no longer in registry, skipping", devices[i].short_addr);
+            continue;
         }
         
         cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = devices[i].short_addr;
@@ -472,7 +522,7 @@ esp_err_t zb_cluster_send_gas_alert(
             ESP_LOGW(TAG, "Failed to send gas alert to router 0x%04x", devices[i].short_addr);
         }
         
-        vTaskDelay(pdMS_TO_TICKS(100));  // Increased delay to prevent buffer exhaustion
+        vTaskDelay(pdMS_TO_TICKS(50));  // Increased for stability
     }
 
     if (success_count > 0) {

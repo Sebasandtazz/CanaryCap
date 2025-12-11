@@ -21,7 +21,7 @@ extern "C" {
 #define ZB_REGISTRY_MAX_DEVICES 10
 
 /* Device heartbeat timeout in seconds */
-#define ZB_DEVICE_TIMEOUT_SEC 90
+#define ZB_DEVICE_TIMEOUT_SEC 60  // Reduced from 90 for faster testing (was 90)
 
 /* Device information structure */
 typedef struct {
@@ -105,6 +105,17 @@ esp_err_t zb_registry_get_device(uint16_t short_addr, zb_device_info_t *device);
  * @return ESP_OK on success
  */
 esp_err_t zb_registry_remove_device(uint16_t short_addr);
+
+/**
+ * @brief Mark a device as inactive (unavailable/out of range)
+ * 
+ * Keeps device in registry but marks as inactive. Device will be
+ * reactivated when heartbeat received or when it rejoins.
+ * 
+ * @param short_addr Network short address
+ * @return ESP_OK on success
+ */
+esp_err_t zb_registry_mark_inactive(uint16_t short_addr);
 
 /**
  * @brief Clear all devices from registry

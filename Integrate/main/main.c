@@ -48,9 +48,10 @@
  * When commented out, the firmware builds as a COORDINATOR by default.
  */
 #define ZB_BUILD_AS_ROUTER
-#define ZB_PERMIT_JOIN_DURATION 1200  //seconds
-/* Periodic reopen interval (seconds): how often coordinator re-opens network to allow joins */
-#define ZB_REOPEN_INTERVAL_SECONDS 30 // 3 minutes
+/* Keep network open for initial joins, then close to save resources */
+#define ZB_PERMIT_JOIN_DURATION 240  // 4 minutes - sufficient for initial device joins
+/* NOTE: Network does NOT need to stay open for routing to work!
+ * RxOnWhenIdle=true is sufficient for message routing. */
 
 //Definitions for SPI and ADXL345
 static const char *TAGSPI = "ADXL345";
@@ -171,6 +172,19 @@ static const char *TAGZB = "Zigbee";
 /* Global flags for alert cancellation */
 static volatile bool severe_alert_active = false;
 static volatile bool network_disconnected_alert_active = false;
+
+/* Gas detection state tracking */
+static volatile bool gas_detected = false;
+static volatile bool gas_alert_active = false;
+static int64_t gas_first_detected_time = 0;   // When gas was first detected in current episode
+static int64_t gas_last_clear_time = 0;        // When gas was last clear (below threshold)
+static int64_t gas_last_zigbee_alert_time = 0; // When we last sent a Zigbee alert
+static uint32_t gas_current_voltage_mv = 0;    // Latest voltage reading
+static uint32_t gas_current_raw = 0;           // Latest raw ADC reading
+#define GAS_THRESHOLD_MV 2700                   // 2.7V threshold for MQ-7 gas detection
+#define GAS_CLEAR_DURATION_MS (3 * 60 * 1000)  // 3 minutes clear before allowing new alert
+#define GAS_CHECK_INTERVAL_MS (60 * 1000)       // 60 seconds between checks when in gas
+static TaskHandle_t gas_alert_task_handle = NULL;
 
 static adc_channel_t channel[1] = {ADC_CHANNEL_3};  // GPIO3 on ESP32-C6 for gas sensor
 static TaskHandle_t adc_task_handle = NULL;
@@ -572,8 +586,9 @@ static const char* infer_impact_type(float ax,float ay,float az,float mag){
     return "none";
 }
 
-/* Forward declaration for severe impact alert task */
+/* Forward declarations for alert tasks */
 static void severe_impact_alert_task(void *param);
+static void gas_alert_task(void *param);
 
 static void classify_impact(float x_g, float y_g, float z_g){
     float mag=sqrtf(x_g*x_g+y_g*y_g+z_g*z_g);
@@ -627,22 +642,44 @@ static void classify_impact(float x_g, float y_g, float z_g){
     
     /* Send impact alert via cluster manager */
     if (severity >= CANARY_IMPACT_MAJOR) {
-        if (zb_mesh_is_joined()) {
-            ESP_LOGW(TAGZB, "Sending impact alert over Zigbee: type=%s severity=%s mag=%.2fg",
-                     zb_cluster_impact_type_to_string(cluster_type),
-                     zb_cluster_impact_severity_to_string(severity),
-                     mag);
-            zb_cluster_send_impact_alert(severity, cluster_type, mag, x_g, y_g, z_g);
-        } else {
-            ESP_LOGE(TAGZB, "Impact alert NOT sent: device not joined to Zigbee network");
-        }
-        
         /* Local alerts for severe impacts - cancellable with button */
         if (severity == CANARY_IMPACT_SEVERE) {
             severe_alert_active = true;
-            ESP_LOGW(TAGZB, "LOCAL SEVERE IMPACT - Press GPIO23 button to cancel alert");
-            xTaskCreate(severe_impact_alert_task, "severe_alert", 2048, NULL, 5, NULL);
+            ESP_LOGW(TAGZB, "LOCAL SEVERE IMPACT - Press GPIO23 button within 10s to cancel");
+            
+            /* Allocate impact data to pass to task */
+            typedef struct {
+                canary_impact_severity_t severity;
+                canary_impact_type_t type;
+                float mag;
+                float x_g;
+                float y_g;
+                float z_g;
+            } impact_data_t;
+            
+            impact_data_t *data = (impact_data_t *)malloc(sizeof(impact_data_t));
+            if (data) {
+                data->severity = severity;
+                data->type = cluster_type;
+                data->mag = mag;
+                data->x_g = x_g;
+                data->y_g = y_g;
+                data->z_g = z_g;
+                /* Don't send Zigbee message yet - let the severe_impact_alert_task handle it after timer */
+                xTaskCreate(severe_impact_alert_task, "severe_alert", 4096, data, 7, NULL);
+            }
         } else if (severity == CANARY_IMPACT_MAJOR) {
+            /* MAJOR impacts send immediately */
+            if (zb_mesh_is_joined()) {
+                ESP_LOGW(TAGZB, "Sending MAJOR impact alert over Zigbee: type=%s mag=%.2fg",
+                         zb_cluster_impact_type_to_string(cluster_type), mag);
+                zb_cluster_send_impact_alert(severity, cluster_type, mag, x_g, y_g, z_g);
+            } else {
+                ESP_LOGE(TAGZB, "Impact alert NOT sent: device not joined to Zigbee network");
+            }
+        }
+        
+        if (severity == CANARY_IMPACT_MAJOR) {
             /* Major impact: 3-second local indication */
             int64_t start_time = esp_timer_get_time();
             int64_t duration_us = 3000000;  // 3 seconds
@@ -893,6 +930,7 @@ void adc_task(void *param)
 
     adc_continuous_handle_t handle = (adc_continuous_handle_t)param;
 
+    ESP_LOGI(TAGADC, "ADC task started - continuous gas monitoring active");
 
     while (1) {
 
@@ -919,35 +957,85 @@ void adc_task(void *param)
                         uint32_t raw = parsed_data[i].raw_data;
                         uint32_t voltage_mv = raw_to_voltage(raw);
                         
+                        /* Update current readings */
+                        gas_current_voltage_mv = voltage_mv;
+                        gas_current_raw = raw;
+                        
+                        int64_t now = esp_timer_get_time();
+                        
                         /* Check for gas detection at 2.7V threshold */
-                        if (voltage_mv >= 2700) {
-                            ESP_LOGW(TAGADC, "GAS DETECTED! Voltage: %ld mV", voltage_mv);
-                            /* Send gas alert over Zigbee */
-                            if (zb_mesh_is_joined()) {
-                                zb_cluster_send_gas_alert(true, voltage_mv, raw);
+                        if (voltage_mv >= GAS_THRESHOLD_MV) {
+                            /* Gas detected */
+                            if (!gas_detected) {
+                                /* FIRST detection in this episode */
+                                gas_detected = true;
+                                gas_first_detected_time = now;
+                                
+                                /* Determine if we should send Zigbee alert */
+                                bool should_alert = false;
+                                if (gas_last_zigbee_alert_time == 0) {
+                                    /* First ever detection */
+                                    should_alert = true;
+                                } else {
+                                    /* Check if we've been clear for 3 minutes */
+                                    int64_t time_since_last_clear_ms = (now - gas_last_clear_time) / 1000LL;
+                                    if (time_since_last_clear_ms >= GAS_CLEAR_DURATION_MS) {
+                                        should_alert = true;
+                                    }
+                                }
+                                
+                                if (should_alert) {
+                                    ESP_LOGE(TAGADC, "*** GAS DETECTED - SENDING ZIGBEE ALERT *** Voltage: %ld mV", voltage_mv);
+                                    /* Send ONE Zigbee alert for this episode */
+                                    if (zb_mesh_is_joined()) {
+                                        zb_cluster_send_gas_alert(true, voltage_mv, raw);
+                                        gas_last_zigbee_alert_time = now;
+                                    }
+                                } else {
+                                    ESP_LOGW(TAGADC, "Gas detected but not sending Zigbee (within 3min cooldown) - Voltage: %ld mV", voltage_mv);
+                                }
+                                
+                                /* Start continuous local alert (buzzer + LED) */
+                                if (!gas_alert_active && gas_alert_task_handle == NULL) {
+                                    gas_alert_active = true;
+                                    xTaskCreate(gas_alert_task, "gas_alert_task", 4096, NULL, 5, &gas_alert_task_handle);
+                                }
+                            }
+                            /* else: already detected, local alerts continue in separate task */
+                        } else {
+                            /* Below threshold - gas clear */
+                            if (gas_detected) {
+                                /* Transitioning from detected to clear */
+                                gas_detected = false;
+                                gas_alert_active = false;  // Signal alert task to stop
+                                gas_last_clear_time = now;
+                                int64_t duration_ms = (now - gas_first_detected_time) / 1000LL;
+                                ESP_LOGI(TAGADC, "Gas cleared - was detected for %lld ms", duration_ms);
+                                
+                                /* Turn LEDs back on (solid) after gas clears */
+                                gpio_set_level(STATUS_LED_GPIO, 0);  // ON
+                                gpio_set_level(HEALTH_LED_GPIO, 0);  // ON
                             }
                         }
                         
                         if(i % 32 == 0) { // Log every 32nd valid sample
-                        // ESP_LOGI(TAGADC, "ADC%d Ch%d raw=%"PRIu32" mV=%"PRIu32,
-                        //         parsed_data[i].unit + 1,
-                        //         parsed_data[i].channel,
-                        //         raw,
-                        //         voltage_mv);
-                        //     } 
-                        }
-                        else {
-                        // ESP_LOGW(TAGADC, "Invalid data [ADC%d_Ch%d_%"PRIu32"]",
-                        //         parsed_data[i].unit + 1,
-                        //         parsed_data[i].channel,
-                        //         parsed_data[i].raw_data);
+                            // ESP_LOGI(TAGADC, "ADC%d Ch%d raw=%"PRIu32" mV=%"PRIu32,
+                            //         parsed_data[i].unit + 1,
+                            //         parsed_data[i].channel,
+                            //         raw,
+                            //         voltage_mv);
+                        } else {
+                            // ESP_LOGW(TAGADC, "Invalid data [ADC%d_Ch%d_%"PRIu32"]",
+                            //         parsed_data[i].unit + 1,
+                            //         parsed_data[i].channel,
+                            //         parsed_data[i].raw_data);
                         }
                     }
-                    log_adc_data_to_spiffs(parsed_data, num_parsed_samples);
-            } 
-            else {
-                ESP_LOGE(TAGADC, "Data parsing failed: %s", esp_err_to_name(parse_ret));
                 }
+                log_adc_data_to_spiffs(parsed_data, num_parsed_samples);
+            } else {
+                ESP_LOGE(TAGADC, "Data parsing failed: %s", esp_err_to_name(parse_ret));
+            }
 
                 /**
                  * Because printing is slow, so every time you call `ulTaskNotifyTake`, it will immediately return.
@@ -966,26 +1054,72 @@ void adc_task(void *param)
 
 // --- Task functions for continuous alerts ---
 
+/* Gas alert task - handles continuous local alerts (buzzer + LED)
+ * while checking every 60s if still in gas environment */
+static void gas_alert_task(void *param)
+{
+    ESP_LOGE(TAGADC, "GAS ALERT TASK STARTED - Alternating STATUS/HEALTH LEDs with indefinite buzzer");
+    int64_t last_check_time = esp_timer_get_time();
+    bool status_led_on = true;  // Track which LED is currently on
+    
+    while (gas_alert_active) {
+        /* Alternate between STATUS and HEALTH LEDs with continuous buzzer */
+        if (status_led_on) {
+            gpio_set_level(STATUS_LED_GPIO, 0);   // STATUS ON
+            gpio_set_level(HEALTH_LED_GPIO, 1);   // HEALTH OFF
+        } else {
+            gpio_set_level(STATUS_LED_GPIO, 1);   // STATUS OFF
+            gpio_set_level(HEALTH_LED_GPIO, 0);   // HEALTH ON
+        }
+        status_led_on = !status_led_on;  // Toggle for next iteration
+        
+        buzzer_beep_ms(LEDC_FREQUENCY, 300);  // Continuous beeping
+        vTaskDelay(pdMS_TO_TICKS(300));
+        
+        /* Every 60 seconds, check if we should send a Zigbee update */
+        int64_t now = esp_timer_get_time();
+        if ((now - last_check_time) >= (GAS_CHECK_INTERVAL_MS * 1000LL)) {
+            last_check_time = now;
+            if (gas_detected) {
+                ESP_LOGW(TAGADC, "Gas still detected after 60s check - voltage: %ld mV", gas_current_voltage_mv);
+                /* Just log locally, don't flood Zigbee network */
+            } else {
+                ESP_LOGI(TAGADC, "Gas cleared during periodic check");
+                break;  // Exit alert loop
+            }
+        }
+    }
+    
+    /* Clean up when alert stops - restore LEDs to normal state (both ON if connected) */
+    if (zb_mesh_is_joined()) {
+        gpio_set_level(HEALTH_LED_GPIO, 0);  // ON (normal state when connected)
+        gpio_set_level(STATUS_LED_GPIO, 0);  // ON (normal state when connected)
+    } else {
+        gpio_set_level(HEALTH_LED_GPIO, 1);  // OFF
+        gpio_set_level(STATUS_LED_GPIO, 1);  // OFF
+    }
+    ESP_LOGI(TAGADC, "Gas alert task ending");
+    gas_alert_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
 static void network_disconnect_alert_task(void *param)
 {
-    ESP_LOGE(TAGZB, "NETWORK DISCONNECTED - Flashing all LEDs until rejoin");
+    ESP_LOGE(TAGZB, "NETWORK DISCONNECTED/DEVICE LEFT - Flashing PENDING+HEALTH+STATUS until reconnection");
     while (network_disconnected_alert_active) {
-        /* Flash all 4 LEDs */
-        gpio_set_level(HEARTBEAT_LED_GPIO, 0);  // ON
+        /* Flash PENDING, HEALTH, and STATUS LEDs with constant buzzer */
         gpio_set_level(HEALTH_LED_GPIO, 0);     // ON
         gpio_set_level(STATUS_LED_GPIO, 0);     // ON
         gpio_set_level(PENDING_LED_GPIO, 0);    // ON
-        buzzer_beep_ms(3000, 300);
+        buzzer_beep_ms(LEDC_FREQUENCY, 300);
         vTaskDelay(pdMS_TO_TICKS(300));
         
-        gpio_set_level(HEARTBEAT_LED_GPIO, 1);  // OFF
         gpio_set_level(HEALTH_LED_GPIO, 1);     // OFF
         gpio_set_level(STATUS_LED_GPIO, 1);     // OFF
         gpio_set_level(PENDING_LED_GPIO, 1);    // OFF
         vTaskDelay(pdMS_TO_TICKS(300));
     }
     /* Cleanup when reconnected */
-    gpio_set_level(HEARTBEAT_LED_GPIO, 1);
     gpio_set_level(HEALTH_LED_GPIO, 1);
     gpio_set_level(STATUS_LED_GPIO, 1);
     gpio_set_level(PENDING_LED_GPIO, 1);
@@ -995,7 +1129,23 @@ static void network_disconnect_alert_task(void *param)
 
 static void severe_impact_alert_task(void *param)
 {
-    while (severe_alert_active) {
+    /* param contains impact data: severity, type, mag, x, y, z */
+    typedef struct {
+        canary_impact_severity_t severity;
+        canary_impact_type_t type;
+        float mag;
+        float x_g;
+        float y_g;
+        float z_g;
+    } impact_data_t;
+    
+    impact_data_t *data = (impact_data_t *)param;
+    
+    /* Alert for 10 seconds with button cancel option */
+    int64_t start_time = esp_timer_get_time();
+    int64_t duration_us = 10000000LL;  // 10 seconds
+    
+    while (severe_alert_active && (esp_timer_get_time() - start_time) < duration_us) {
         gpio_set_level(HEALTH_LED_GPIO, 0);  // ON
         gpio_set_level(PENDING_LED_GPIO, 0); // ON
         buzzer_beep_ms(LEDC_FREQUENCY, 200);  // Resonant frequency for max volume
@@ -1004,10 +1154,29 @@ static void severe_impact_alert_task(void *param)
         gpio_set_level(PENDING_LED_GPIO, 1); // OFF
         vTaskDelay(pdMS_TO_TICKS(200));
     }
-    /* Cleanup when cancelled */
+    
+    /* Cleanup LEDs */
     gpio_set_level(HEALTH_LED_GPIO, 1);
     gpio_set_level(PENDING_LED_GPIO, 1);
-    ESP_LOGI(TAGZB, "Severe alert cancelled");
+    
+    /* If still active after 10s, send Zigbee alert */
+    if (severe_alert_active) {
+        ESP_LOGW(TAGZB, "Sending SEVERE impact alert over Zigbee (not cancelled): type=%s mag=%.2fg",
+                 zb_cluster_impact_type_to_string(data->type), data->mag);
+        if (zb_mesh_is_joined()) {
+            zb_cluster_send_impact_alert(data->severity, data->type, data->mag, 
+                                        data->x_g, data->y_g, data->z_g);
+        }
+        severe_alert_active = false;
+    } else {
+        ESP_LOGI(TAGZB, "Severe alert cancelled - NOT sending Zigbee message");
+    }
+    
+    /* Free allocated impact data */
+    if (data) {
+        free(data);
+    }
+    
     vTaskDelete(NULL);
 }
 
@@ -1038,6 +1207,9 @@ static void mesh_state_change_callback(zb_mesh_state_t old_state, zb_mesh_state_
         /* Keep STATUS LED on while connected (solid) */
         gpio_set_level(STATUS_LED_GPIO, 0);  // ON
         
+        /* Also turn on HEALTH LED to indicate normal operation */
+        gpio_set_level(HEALTH_LED_GPIO, 0);  // ON
+        
         /* Stop any blinking that was happening */
         stop_led_blink();
         
@@ -1052,7 +1224,7 @@ static void mesh_state_change_callback(zb_mesh_state_t old_state, zb_mesh_state_
         network_disconnected_alert_active = true;
         
         /* Spawn task for continuous disconnect alert */
-        xTaskCreate(network_disconnect_alert_task, "disconnect_alert", 2048, NULL, 5, NULL);
+        xTaskCreate(network_disconnect_alert_task, "disconnect_alert", 2048, NULL, 7, NULL);
         
         /* Start blinking STATUS LED */
         start_led_blink(STATUS_LED_GPIO, 500, 500);
@@ -1087,16 +1259,9 @@ static void mesh_device_event_callback(bool joined, uint16_t device_addr)
     } else {
         ESP_LOGE(TAGZB, "*** DEVICE LEFT NETWORK: 0x%04x ***", device_addr);
         
-        /* Flash HEALTH LED slowly to indicate device left */
-        for (int i = 0; i < 2; i++) {
-            gpio_set_level(HEALTH_LED_GPIO, 0);  // ON
-            vTaskDelay(pdMS_TO_TICKS(300));
-            gpio_set_level(HEALTH_LED_GPIO, 1);  // OFF
-            vTaskDelay(pdMS_TO_TICKS(300));
-        }
-        
-        /* Warning beep */
-        buzzer_beep_ms(LEDC_FREQUENCY, 300);
+        /* Activate continuous device leave alert - flash PENDING+HEALTH+STATUS with constant buzzer */
+        network_disconnected_alert_active = true;
+        xTaskCreate(network_disconnect_alert_task, "device_leave_alert", 2048, NULL, 7, NULL);
     }
 }
 
@@ -1107,6 +1272,11 @@ static void heartbeat_received_callback(const canary_heartbeat_msg_t *msg, uint1
     
     /* Update device registry with heartbeat timestamp */
     zb_registry_update_heartbeat(src_addr, msg->seq_num);
+    
+    /* Flash HEARTBEAT LED when heartbeat is received from network */
+    gpio_set_level(HEARTBEAT_LED_GPIO, 0);  // ON
+    vTaskDelay(pdMS_TO_TICKS(100));
+    gpio_set_level(HEARTBEAT_LED_GPIO, 1);  // OFF
 }
 
 static void network_status_received_callback(const canary_network_status_msg_t *msg, uint16_t src_addr)
@@ -1205,7 +1375,27 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
         ESP_LOGE(TAGZB, "================ CUSTOM CLUSTER CALLBACK ================ id=0x%x", callback_id);
     }
     
+    /* Additional logging for EVERY callback type to catch anything */
+    ESP_LOGE(TAGZB, "[ACTION_HANDLER] Type names: REQ=0x%x RESP=0x%x REPORT=0x%x",
+             ESP_ZB_CORE_CMD_CUSTOM_CLUSTER_REQ_CB_ID,
+             ESP_ZB_CORE_CMD_CUSTOM_CLUSTER_RESP_CB_ID,
+             ESP_ZB_CORE_REPORT_ATTR_CB_ID);
+    
     switch (callback_id) {
+    case ESP_ZB_CORE_REPORT_ATTR_CB_ID:
+        {
+            /* Handle attribute reports - some devices send custom clusters this way */
+            ESP_LOGW(TAGZB, "[ACTION] ATTRIBUTE REPORT RECEIVED - checking if it's our custom cluster");
+            esp_zb_zcl_report_attr_message_t *report = (esp_zb_zcl_report_attr_message_t *)message;
+            if (report) {
+                uint16_t src_addr = report->src_address.u.short_addr;
+                uint16_t cluster_id = report->cluster;
+                ESP_LOGW(TAGZB, "[ACTION] REPORT: SRC=0x%04x CLUSTER=0x%04x", src_addr, cluster_id);
+                
+                /* For now, just log it - we'll process through the normal custom cluster path */
+            }
+        }
+        break;
     case ESP_ZB_CORE_CMD_CUSTOM_CLUSTER_REQ_CB_ID:
     case ESP_ZB_CORE_CMD_CUSTOM_CLUSTER_RESP_CB_ID:
         {
@@ -1215,6 +1405,25 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
                 uint16_t src_addr = msg->info.src_address.u.short_addr;
                 ESP_LOGE(TAGZB, "[ACTION] SRC=0x%04x CLUSTER=0x%04x SIZE=%d",
                          src_addr, msg->info.cluster, msg->data.size);
+                
+                /* Auto-add source device to registry if not already present */
+                zb_device_info_t check_device;
+                if (src_addr != esp_zb_get_short_address() && src_addr != 0xFFFF && src_addr != 0xFFFE) {
+                    if (zb_registry_get_device(src_addr, &check_device) != ESP_OK) {
+                        ESP_LOGW(TAGZB, "Source device 0x%04x not in registry - adding it now", src_addr);
+                        esp_err_t add_result = zb_registry_add_device(src_addr, msg->info.src_endpoint);
+                        if (add_result == ESP_OK) {
+                            uint8_t total_devices = zb_registry_get_count();
+                            ESP_LOGI(TAGZB, "✓ Added device 0x%04x (endpoint=%d) - registry now has %d devices", 
+                                     src_addr, msg->info.src_endpoint, total_devices);
+                        } else {
+                            ESP_LOGE(TAGZB, "✗ Failed to add device 0x%04x to registry: %s", 
+                                     src_addr, esp_err_to_name(add_result));
+                        }
+                    } else {
+                        ESP_LOGD(TAGZB, "Device 0x%04x already in registry", src_addr);
+                    }
+                }
                 
                 if (msg->info.cluster == ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT) {
                     canary_impact_alert_msg_t *alert = (canary_impact_alert_msg_t*)msg->data.value;
@@ -1369,8 +1578,17 @@ static void esp_zb_task(void *pvParameters)
         esp_zb_attribute_list_t *network_cluster_server = esp_zb_zcl_attr_list_create(ZB_ZCL_CLUSTER_ID_CANARY_NETWORK_STATUS);
         esp_zb_cluster_list_add_custom_cluster(cluster_list, network_cluster_server, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
         
-        ESP_LOGE(TAGZB, "!!! CUSTOM CANARY CLUSTERS REGISTERED !!! endpoint=%d, impact=0x%04x, gas=0x%04x",
-                 HA_ONOFF_SWITCH_ENDPOINT, ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT, ZB_ZCL_CLUSTER_ID_CANARY_GAS_ALERT);
+        /* Heartbeat - client side for sending */
+        esp_zb_attribute_list_t *heartbeat_cluster_client = esp_zb_zcl_attr_list_create(ZB_ZCL_CLUSTER_ID_CANARY_HEARTBEAT);
+        esp_zb_cluster_list_add_custom_cluster(cluster_list, heartbeat_cluster_client, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+        
+        /* Heartbeat - server side for receiving */
+        esp_zb_attribute_list_t *heartbeat_cluster_server = esp_zb_zcl_attr_list_create(ZB_ZCL_CLUSTER_ID_CANARY_HEARTBEAT);
+        esp_zb_cluster_list_add_custom_cluster(cluster_list, heartbeat_cluster_server, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+        
+        ESP_LOGE(TAGZB, "!!! CUSTOM CANARY CLUSTERS REGISTERED !!! endpoint=%d, impact=0x%04x, gas=0x%04x, heartbeat=0x%04x, network=0x%04x",
+                 HA_ONOFF_SWITCH_ENDPOINT, ZB_ZCL_CLUSTER_ID_CANARY_IMPACT_ALERT, ZB_ZCL_CLUSTER_ID_CANARY_GAS_ALERT,
+                 ZB_ZCL_CLUSTER_ID_CANARY_HEARTBEAT, ZB_ZCL_CLUSTER_ID_CANARY_NETWORK_STATUS);
     } else {
         ESP_LOGE(TAGZB, "Failed to get cluster list for endpoint");
     }
@@ -1518,12 +1736,7 @@ static void heartbeat_task(void *pvParameters)
         uint16_t short_addr = esp_zb_get_short_address();
         
         if (is_joined && short_addr != 0xFFFF) {
-            /* Connected - blink HEARTBEAT LED every 2 seconds */
-            
-            /* Quick pulse on HEARTBEAT LED to show we're alive */
-            gpio_set_level(HEARTBEAT_LED_GPIO, 0);  // ON
-            vTaskDelay(pdMS_TO_TICKS(100));
-            gpio_set_level(HEARTBEAT_LED_GPIO, 1);  // OFF
+            /* Connected - HEARTBEAT LED only flashes when heartbeat received (no local pulse) */
             
             pulse_count++;
             boot_time_sec += 2;  // Increment uptime (2 seconds per loop)
@@ -1534,6 +1747,11 @@ static void heartbeat_task(void *pvParameters)
                 esp_err_t ret = zb_cluster_send_heartbeat(heartbeat_seq, boot_time_sec, 255);
                 if (ret == ESP_OK) {
                     ESP_LOGI(TAGZB, "Heartbeat sent: seq=%lu, uptime=%lu sec", heartbeat_seq, boot_time_sec);
+                    
+                    /* Flash HEARTBEAT LED when sending heartbeat */
+                    gpio_set_level(HEARTBEAT_LED_GPIO, 0);  // ON
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                    gpio_set_level(HEARTBEAT_LED_GPIO, 1);  // OFF
                 } else {
                     ESP_LOGW(TAGZB, "Failed to send heartbeat");
                 }
@@ -1565,6 +1783,7 @@ static void device_timeout_checker_task(void *pvParameters)
     uint8_t timeout_count;
     
     ESP_LOGI(TAGZB, "Device timeout checker task started (coordinator mode)");
+    ESP_LOGI(TAGZB, "Checking for device timeouts every 30 seconds (timeout threshold: %d sec)", ZB_DEVICE_TIMEOUT_SEC);
     
     while (1) {
         /* Check for device timeouts every 30 seconds */
@@ -1574,6 +1793,8 @@ static void device_timeout_checker_task(void *pvParameters)
         if (!zb_mesh_is_joined()) {
             continue;
         }
+        
+        ESP_LOGD(TAGZB, "Running timeout check... (devices in registry: %d)", zb_registry_get_count());
         
         /* Check for timed out devices */
         esp_err_t ret = zb_registry_check_timeouts(timed_out_devices, ZB_REGISTRY_MAX_DEVICES, &timeout_count);
@@ -1783,7 +2004,7 @@ void app_main(void)
     adc_continuous_handle_t handle = NULL;
     continuous_adc_init(channel, sizeof(channel) / sizeof(adc_channel_t), &handle);
 
-    xTaskCreate(adc_task, "adc_task", 4096, handle, 5, &adc_task_handle);
+    xTaskCreate(adc_task, "adc_task", 8192, handle, 3, &adc_task_handle);
 
     s_task_handle = adc_task_handle;
 
@@ -1810,24 +2031,36 @@ void app_main(void)
             .radio_config = ESP_ZB_DEFAULT_RADIO_CONFIG(),
             .host_config = ESP_ZB_DEFAULT_HOST_CONFIG(),
         };
+        
+        /* Optimize radio config for better range and reliability */
+        zb_config.radio_config.radio_mode = ZB_RADIO_MODE_NATIVE;
+        
+        /* Optimize host config for responsiveness */
+        /* Increase host connection timeout to prevent premature disconnections */
+        
         ESP_ERROR_CHECK(esp_zb_platform_config(&zb_config));
     }
+    
+    /* Set maximum TX power for better signal strength (20 dBm for ESP32-C6) */
+    esp_zb_set_tx_power(20);
+    ESP_LOGI(TAGZB, "Zigbee TX power set to maximum (20 dBm) for better range");
 
-    xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
+    /* Increased stack size to prevent stack overflow with multiple custom clusters */
+    xTaskCreate(esp_zb_task, "Zigbee_main", 12288, NULL, 7, NULL);
     
     /* Start heartbeat task to show connection status and send heartbeat messages */
-    xTaskCreate(heartbeat_task, "heartbeat", 2048, NULL, 3, NULL);
+    xTaskCreate(heartbeat_task, "heartbeat", 2048, NULL, 7, NULL);
     ESP_LOGI(TAGZB, "Heartbeat task started - sends heartbeat every 30 seconds");
     
     /* Start device timeout checker for coordinators */
 #ifndef ZB_BUILD_AS_ROUTER
     /* Only start timeout checker if building as coordinator */
-    xTaskCreate(device_timeout_checker_task, "device_timeout", 2048, NULL, 3, NULL);
+    xTaskCreate(device_timeout_checker_task, "device_timeout", 2048, NULL, 7, NULL);
     ESP_LOGI(TAGZB, "Device timeout checker started (coordinator mode)");
 #endif
     
     /* Start soft leave monitor task - double-press GPIO8 to soft leave */
-    xTaskCreate(soft_leave_monitor_task, "soft_leave", 2048, NULL, 3, NULL);
+    xTaskCreate(soft_leave_monitor_task, "soft_leave", 2048, NULL, 7, NULL);
     ESP_LOGI(TAGZB, "Soft leave monitor started - double-press GPIO8 to soft leave");
     
     /* Start button monitor task for factory reset */

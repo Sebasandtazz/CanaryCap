@@ -379,6 +379,10 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
                     /* Coordinator needs to start steering to become discoverable again */
                     ESP_LOGI(TAG, "Coordinator starting steering after reboot");
                     esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
+                } else {
+                    /* Router needs to start steering to rejoin the network */
+                    ESP_LOGI(TAG, "Router starting steering to rejoin network");
+                    esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
                 }
             }
         } else {
@@ -397,10 +401,8 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
             ESP_LOGI(TAG, "PAN ID: 0x%04x, Channel: %d", 
                      esp_zb_get_pan_id(), esp_zb_get_current_channel());
             
-            /* Open network for joins */
-            zb_mesh_open_network(ZB_MESH_PERMIT_JOIN_DURATION);
-            
-            /* Start steering so coordinator can be discovered */
+            /* Start steering so coordinator can be discovered and accept joins */
+            /* Note: steering will automatically open network for permit_join */
             esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
             
             zb_mesh_update_state(ZB_MESH_STATE_JOINED);
@@ -413,34 +415,33 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
 
     case ESP_ZB_BDB_SIGNAL_STEERING:
         if (err_status == ESP_OK) {
-            ESP_LOGI(TAG, "Network steering completed");
-            zb_mesh_update_state(ZB_MESH_STATE_JOINED);
-            
-            /* Coordinator should reopen network for joins after steering */
             if (device_role == ZB_MESH_ROLE_COORDINATOR) {
-                ESP_LOGI(TAG, "Coordinator opening network for joins (duration=%d sec)", ZB_MESH_PERMIT_JOIN_DURATION);
-                zb_mesh_open_network(ZB_MESH_PERMIT_JOIN_DURATION);
-            }
-            
-            /* Routers should also open their network to act as routers */
-            if (device_role == ZB_MESH_ROLE_ROUTER) {
-                ESP_LOGI(TAG, "Router opening network to enable routing functionality");
-                /* Open network on router to allow it to route messages */
-                zb_mesh_open_network(ZB_MESH_PERMIT_JOIN_DURATION);
+                ESP_LOGI(TAG, "Coordinator: Network steering completed");
+                zb_mesh_update_state(ZB_MESH_STATE_JOINED);
                 
-                /* Wait longer for network to fully stabilize before announcing */
-                vTaskDelay(pdMS_TO_TICKS(3000));
-                ESP_LOGI(TAG, "Router announcing presence to network");
-                zb_cluster_send_network_status(CANARY_NETWORK_CONNECTED);
+                /* After steering, explicitly open network for joins.
+                 * Steering doesn't automatically keep network open for the full permit-join duration.
+                 * This is DIFFERENT from automatic reopening (which we removed) - this is the
+                 * initial opening needed for routers to join. */
+                ESP_LOGW(TAG, "Coordinator: Opening network for %d seconds to allow router joins", ZB_MESH_PERMIT_JOIN_DURATION);
+                esp_err_t open_result = zb_mesh_open_network(ZB_MESH_PERMIT_JOIN_DURATION);
+                if (open_result != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to open network: %s", esp_err_to_name(open_result));
+                } else {
+                    ESP_LOGW(TAG, "Network is now OPEN - routers can join for next %d seconds", ZB_MESH_PERMIT_JOIN_DURATION);
+                }
+            } else {
+                ESP_LOGI(TAG, "Router: Network steering completed - joined successfully");
+                zb_mesh_update_state(ZB_MESH_STATE_JOINED);
             }
+            ESP_LOGI(TAG, "Device can now route messages");
             
-            /* Delay before sending network status to allow stack to stabilize */
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            zb_cluster_send_network_status(CANARY_NETWORK_CONNECTED);
+            /* Device discovery: Balance between stabilization and responsiveness.
+             * Don't wait too long as this blocks the main Zigbee task during critical join window. */
+            ESP_LOGI(TAG, "Network joined - waiting 5s before starting device discovery...");
+            vTaskDelay(pdMS_TO_TICKS(5000));  // 5 seconds - enough for stabilization
             
-            /* Start device discovery to find other routers/coordinator */
             ESP_LOGI(TAG, "Starting device discovery...");
-            vTaskDelay(pdMS_TO_TICKS(5000));  // Wait longer for network to fully settle and buffers to clear
             zb_registry_start_discovery();
             
             zb_mesh_print_network_info();
@@ -464,19 +465,17 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
             
             s_last_joined_addr = dev_annce_params->device_short_addr;
             
-            /* Re-open network to allow more devices to join */
-            if (device_role == ZB_MESH_ROLE_COORDINATOR) {
-                ESP_LOGI(TAG, "Reopening network for additional joins");
-                zb_mesh_open_network(ZB_MESH_PERMIT_JOIN_DURATION);
-            }
+            /* Network is already open - no need to reopen.
+             * Excessive open_network calls cause buffer pool exhaustion. */
             
             /* When a new device joins, re-run discovery to add it to registry */
             if (dev_annce_params->device_short_addr != esp_zb_get_short_address()) {
-                ESP_LOGI(TAG, "Device 0x%04x announced - will rediscover network devices", 
+                ESP_LOGI(TAG, "Device 0x%04x announced - will rediscover after stabilization", 
                          dev_annce_params->device_short_addr);
                 
-                /* Wait for new device to fully stabilize and complete its own discovery */
-                vTaskDelay(pdMS_TO_TICKS(8000));
+                /* Wait for device to stabilize, but not so long that it blocks network operations.
+                 * Router needs coordinator responsive during association handshake. */
+                vTaskDelay(pdMS_TO_TICKS(3000));  // 3 seconds - enough for basic stabilization
                 
                 /* Re-run discovery to find the newly joined device */
                 ESP_LOGI(TAG, "Re-running device discovery to find new device 0x%04x", 
@@ -494,9 +493,14 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
         if (err_status == ESP_OK) {
             uint8_t duration = *(uint8_t *)esp_zb_app_signal_get_params(p_sg_p);
             if (duration > 0) {
-                ESP_LOGI(TAG, "Network open for %d seconds", duration);
+                ESP_LOGW(TAG, "==== NETWORK OPEN FOR JOINS: %d seconds remaining ====", duration);
             } else {
-                ESP_LOGI(TAG, "Network closed to new joins");
+                ESP_LOGW(TAG, "==== NETWORK CLOSED TO NEW JOINS ====");
+                ESP_LOGI(TAG, "Existing devices will continue routing normally (RxOnWhenIdle=true)");
+                /* DO NOT automatically reopen! This causes buffer exhaustion and stack dumps.
+                 * Routers will continue to route messages as long as RxOnWhenIdle=true,
+                 * which is already set in main.c (esp_zb_set_rx_on_when_idle).
+                 * Only manually reopen network when you want to allow new devices to join. */
             }
         }
         break;
@@ -515,10 +519,20 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
                 (esp_zb_zdo_signal_leave_indication_params_t *)esp_zb_app_signal_get_params(p_sg_p);
             
             if (leave_params) {
-                ESP_LOGE(TAG, "*** CHILD DEVICE LEFT NETWORK: 0x%04x ***", leave_params->short_addr);
+                ESP_LOGE(TAG, "*** CHILD DEVICE LEFT NETWORK: 0x%04x (rejoin=%d) ***", 
+                         leave_params->short_addr, leave_params->rejoin);
+                
+                if (leave_params->rejoin) {
+                    ESP_LOGI(TAG, "Device 0x%04x left with rejoin flag - will attempt to rejoin", 
+                             leave_params->short_addr);
+                } else {
+                    ESP_LOGW(TAG, "Device 0x%04x left without rejoin - may not return", 
+                             leave_params->short_addr);
+                }
                 
                 /* Remove device from registry */
                 zb_registry_remove_device(leave_params->short_addr);
+                ESP_LOGI(TAG, "Device 0x%04x removed from registry", leave_params->short_addr);
                 
                 /* Notify application via callback */
                 if (device_event_cb) {
@@ -526,6 +540,35 @@ void zb_mesh_handle_signal(esp_zb_app_signal_t *signal_struct)
                 }
             }
         }
+        break;
+
+    case ESP_ZB_ZDO_DEVICE_UNAVAILABLE:
+        {
+            /* Device is unreachable - likely out of range or powered off */
+            esp_zb_zdo_device_unavailable_params_t *unavail_params = 
+                (esp_zb_zdo_device_unavailable_params_t *)esp_zb_app_signal_get_params(p_sg_p);
+            
+            if (unavail_params) {
+                ESP_LOGW(TAG, "*** DEVICE UNAVAILABLE: 0x%04x (out of range or offline) ***", 
+                         unavail_params->short_addr);
+                
+                /* Mark device as inactive in registry but don't remove it
+                 * It may come back in range and rejoin automatically */
+                zb_registry_mark_inactive(unavail_params->short_addr);
+                
+                /* Optionally notify application */
+                if (device_event_cb) {
+                    ESP_LOGI(TAG, "Device 0x%04x marked as unavailable - will auto-rejoin when in range", 
+                             unavail_params->short_addr);
+                }
+            }
+        }
+        break;
+
+    case ESP_ZB_NWK_SIGNAL_NO_ACTIVE_LINKS_LEFT:
+        ESP_LOGW(TAG, "*** NO ACTIVE LINKS - ALL ROUTES EXPIRED ***");
+        ESP_LOGI(TAG, "This is normal if all routers are out of range");
+        ESP_LOGI(TAG, "Devices will automatically rejoin when they come back in range");
         break;
 
     default:
